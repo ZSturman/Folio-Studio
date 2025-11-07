@@ -8,36 +8,47 @@
 import SwiftUI
 import SwiftData
 import UniformTypeIdentifiers
+import Combine
 
 @main
 struct FolioApp: App {
+    @StateObject private var session = AppSession()
+
+    
+    
     var body: some Scene {
-        DocumentGroup(editing: .itemDocument, migrationPlan: FolioMigrationPlan.self) {
-            ContentView()
+#if os(macOS)
+        Window("Folio", id: "launcher") {
+    LauncherView()
+                .modelContainer(for: FolioVersionedSchema.models)
+        .environmentObject(session)
+}
+#endif
+        // 2) Real document windows only open after a file is chosen or created
+        DocumentGroup(newDocument:  FolioDocument() ) { file in
+            ContentView(document: file.$document, fileURL: file.fileURL)
+                .environmentObject(session)
+                .background(SeedBootstrapper())
+
         }
+        .modelContainer(for: FolioVersionedSchema.models)
+        .commands {
+            CommandGroup(replacing: .newItem) {
+                Button("New…") { DocumentActions.createNewDocumentWithSavePanel() }
+                    .keyboardShortcut("n")
+                Button("Open…") { DocumentActions.openExistingDocumentPanel() }
+                    .keyboardShortcut("o")
+            }
+        }
+        
+        #if macOS
+        Settings { SettingsView() }
+        #endif
     }
+    
 }
 
-extension UTType {
-    static var itemDocument: UTType {
-        UTType(importedAs: "com.example.item-document")
-    }
-}
 
-struct FolioMigrationPlan: SchemaMigrationPlan {
-    static var schemas: [VersionedSchema.Type] = [
-        FolioVersionedSchema.self,
-    ]
-
-    static var stages: [MigrationStage] = [
-        // Stages of migration between VersionedSchema, if required.
-    ]
-}
-
-struct FolioVersionedSchema: VersionedSchema {
-    static var versionIdentifier = Schema.Version(1, 0, 0)
-
-    static var models: [any PersistentModel.Type] = [
-        Item.self,
-    ]
+final class AppSession: ObservableObject {
+    @Published var openDocumentCount: Int = 0
 }

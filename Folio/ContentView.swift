@@ -10,57 +10,85 @@ import SwiftData
 
 struct ContentView: View {
     @Environment(\.modelContext) private var modelContext
-    @Query private var items: [Item]
+    @Environment(\.openWindow) private var openWindow
+    
+    @Binding var document: FolioDocument
+    @EnvironmentObject var session: AppSession
+    @StateObject private var sdc = SwiftDataCoordinator()
+    
+    
+    @State private var selection: SidebarTab? = .basicInfo
+    
+    var fileURL: URL?
 
     var body: some View {
         NavigationSplitView {
-            List {
-                ForEach(items) { item in
-                    NavigationLink {
-                        Text("Item at \(item.timestamp, format: Date.FormatStyle(date: .numeric, time: .standard))")
-                    } label: {
-                        Text(item.timestamp, format: Date.FormatStyle(date: .numeric, time: .standard))
-                    }
-                }
-                .onDelete(perform: deleteItems)
-            }
+            SidebarTabsView(selection: $selection)
 #if os(macOS)
-            .navigationSplitViewColumnWidth(min: 180, ideal: 200)
+                .navigationSplitViewColumnWidth(min: 180, ideal: 200)
 #endif
-            .toolbar {
-#if os(iOS)
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    EditButton()
-                }
-#endif
-                ToolbarItem {
-                    Button(action: addItem) {
-                        Label("Add Item", systemImage: "plus")
-                    }
-                }
-            }
         } detail: {
-            Text("Select an item")
-        }
-    }
-
-    private func addItem() {
-        withAnimation {
-            let newItem = Item(timestamp: Date())
-            modelContext.insert(newItem)
-        }
-    }
-
-    private func deleteItems(offsets: IndexSet) {
-        withAnimation {
-            for index in offsets {
-                modelContext.delete(items[index])
+            Group {
+                if let selection {
+                    ScrollView {
+                        detailView(for: selection)
+                            .environmentObject(sdc)
+                    }
+                } else {
+                    Text("Select a Tab")
+                        .foregroundStyle(.secondary)
+                }
             }
+            .padding()
+        }
+        .onAppear {
+            sdc.bind(using: modelContext)
+            session.openDocumentCount += 1
+        }
+        .task(id: fileURL) {
+            guard let url = fileURL else { return }
+            if $document.wrappedValue.title.isEmpty { $document.wrappedValue.title = url.deletingPathExtension().lastPathComponent }
+            $document.wrappedValue.filePath = url
+            let snapshot = document
+            let r = await sdc.reconcileOnOpen(from: snapshot, fileURL: url)
+            if case .failure(let e) = r { print("[ContentView] reconcile error: \(e)") }
+            // Mark documents created via your launcher on first open.
+            if document.createdAt == nil {
+                document.createdAt = Date()
+            }
+        }
+        .onDisappear {
+            Task { _ = await sdc.flushSwiftDataChange(for: $document.wrappedValue.id) }
+            session.openDocumentCount -= 1
+            if session.openDocumentCount == 0 {
+                openWindow(id: "launcher")
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func detailView(for tab: SidebarTab) -> some View {
+        switch tab {
+        case .basicInfo:
+            BasicInfoTabView(document: $document)
+        case .collection:
+            CollectionTabView(document: $document)
+        case .content:
+            ContentTabView(document: $document)
+        case .media:
+            MediaTabView(document: $document)
+        case .other:
+            OtherTabView(document: $document)
+        case .tagsAndClassification:
+            TagsAndClassificationTabView(document: $document)
+        case .settings:
+            SettingsView()
         }
     }
 }
 
 #Preview {
-    ContentView()
-        .modelContainer(for: Item.self, inMemory: true)
+    ContentView(document: .constant(FolioDocument()), fileURL: nil)
+        .environmentObject(AppSession())
+        .modelContainer(for: FolioVersionedSchema.models, inMemory: true)
 }
