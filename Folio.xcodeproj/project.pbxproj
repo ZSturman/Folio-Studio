@@ -6,13 +6,8 @@
 	objectVersion = 77;
 	objects = {
 
-/* Begin PBXBuildFile section */
-		EF9D2A062EBE4036003351C8 /* FilePreviewRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = EF9D2A052EBE4036003351C8 /* FilePreviewRow.swift */; };
-/* End PBXBuildFile section */
-
 /* Begin PBXFileReference section */
 		EF20B66A2EB83CED000C8E07 /* Folio.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Folio.app; sourceTree = BUILT_PRODUCTS_DIR; };
-		EF9D2A052EBE4036003351C8 /* FilePreviewRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FilePreviewRow.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -52,7 +47,6 @@
 			children = (
 				EF20B66C2EB83CED000C8E07 /* Folio */,
 				EF20B66B2EB83CED000C8E07 /* Products */,
-				EF9D2A052EBE4036003351C8 /* FilePreviewRow.swift */,
 			);
 			sourceTree = "<group>";
 		};
@@ -140,7 +134,6 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				EF9D2A062EBE4036003351C8 /* FilePreviewRow.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
