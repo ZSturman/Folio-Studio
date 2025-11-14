@@ -5,7 +5,6 @@
 //  Created by Zachary Sturman on 11/4/25.
 //
 
-#if os(macOS)
 import SwiftUI
 import AppKit
 import SwiftData
@@ -16,8 +15,9 @@ struct LauncherView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject var session: AppSession
     
-    @Query(sort: [SortDescriptor(\ProjectDoc.updatedAt)])
+    @Query(sort: [SortDescriptor(\ProjectDoc.updatedAt, order: .reverse)])
     private var documents: [ProjectDoc]
+    
 
     var body: some View {
         VStack(spacing: 16) {
@@ -42,17 +42,27 @@ struct LauncherView: View {
             }
             
             List {
-                ForEach(documents, id: \.self) { doc in
-                    HStack {
-                        Text(doc.title)
-                        Spacer()
-                        Text(doc.filePath)
+                ForEach(documents.prefix(8), id: \.self) { doc in
+                    Button {
+                        openDocument(doc)
+                    } label: {
+                        HStack {
+                            Text(doc.title)
+                            Spacer()
+                            Text(doc.filePath)
+                        }
                     }
+                    .buttonStyle(.plain)
                 }
             }
         }
         .padding(24)
         .frame(minWidth: 360)
     }
+    private func openDocument(_ doc: ProjectDoc) {
+        let url = URL(fileURLWithPath: doc.filePath)
+        NSDocumentController.shared.openDocument(withContentsOf: url, display: true) { _, _, _ in
+            dismiss()
+        }
+    }
 }
-#endif

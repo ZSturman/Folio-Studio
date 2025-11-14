@@ -8,13 +8,46 @@
 import Foundation
 import SwiftUI
 
+enum BasicInfoSubtab: String, CaseIterable, Identifiable, Hashable {
+    case main
+    case classification
+    case details
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .main:           return "Main"
+        case .classification: return "Classification"
+        case .details:        return "Details"
+        }
+    }
+}
+
+enum ContentSubtab: String, CaseIterable, Identifiable, Hashable {
+    case summary
+    case description
+    case resources
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .summary:     return "Summary"
+        case .description: return "Description"
+        case .resources:   return "Resources"
+        }
+    }
+}
+
 enum SidebarTab: String, CaseIterable, Identifiable, Hashable {
     case basicInfo
-    case tagsAndClassification
-    case content
     case media
+
+    case content
     case collection
-    case other
+
+    
     case settings
 
     var id: String { rawValue }
@@ -25,8 +58,6 @@ enum SidebarTab: String, CaseIterable, Identifiable, Hashable {
         case .collection:             return "Collection"
         case .content:                return "Content"
         case .media:                  return "Media"
-        case .tagsAndClassification:  return "Classification"
-        case .other:                  return "Other"
         case .settings:               return "Settings"
         }
     }
@@ -36,24 +67,41 @@ enum SidebarTab: String, CaseIterable, Identifiable, Hashable {
         case .basicInfo:              return "info.circle"
         case .collection:             return "tray"
         case .content:                return "doc.text"
-        case .media:                  return "photo.on.rectangle"
-        case .tagsAndClassification:  return "tag"
-        case .other:                  return "ellipsis.circle"
+            case .media:                  return "video"
         case .settings:               return "gear"
         }
     }
 }
-
+  
 struct SidebarTabsView: View {
     @Binding var selection: SidebarTab?
+    
+    private var topTabs: [SidebarTab] { SidebarTab.allCases.filter { $0 != .settings } }
 
     var body: some View {
-        List(SidebarTab.allCases, selection: $selection) { tab in
-            Label(tab.title, systemImage: tab.systemImage)
-                .tag(tab)
+        ZStack(alignment: .bottom) {
+            List(topTabs, selection: $selection) { tab in
+                Label(tab.title, systemImage: tab.systemImage)
+                    .tag(tab)
+            }
+
+            settingsRow
+                .padding(.horizontal)
+                .padding(.bottom, 8)
         }
-        .navigationTitle("Folio")
-        .listStyle(.sidebar)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var settingsRow: some View {
+        Label(SidebarTab.settings.title, systemImage: SidebarTab.settings.systemImage)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.vertical, 6)
+            .padding(.horizontal, 4)
+            .background(selection == .settings ? Color.accentColor.opacity(0.2) : .clear)
+            .contentShape(Rectangle())
+            .onTapGesture {
+                selection = .settings
+            }
     }
 }
 

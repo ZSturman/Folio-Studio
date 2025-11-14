@@ -63,53 +63,67 @@ struct ProjectStatusPickerView: View {
     }
 
     var body: some View {
-        HStack(spacing: 12) {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Status & Phase")
+                .font(.headline)
 
-            // Status row
-            HStack(spacing: 8) {
-                Picker("Status", selection: selectedStatusBinding) {
-                    Text("None").tag(nil as ProjectStatus?)
-                    ForEach(statuses, id: \.id) { s in
-                        Text(s.name).tag(s as ProjectStatus?)
+            HStack(alignment: .firstTextBaseline, spacing: 24) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Status")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    HStack(spacing: 8) {
+                        Picker("", selection: selectedStatusBinding) {
+                            Text("None").tag(nil as ProjectStatus?)
+                            ForEach(statuses, id: \.id) { s in
+                                Text(s.name).tag(s as ProjectStatus?)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        .controlSize(.large)
+                        .frame(minWidth: 180, alignment: .leading)
+
+                        Button {
+                            newStatusName = ""
+                            showAddStatusSheet = true
+                        } label: {
+                            Image(systemName: "plus")
+                        }
+                        .help("Add Status")
                     }
                 }
-                .pickerStyle(.menu)
-                .controlSize(.large)
-                .frame(minWidth: 180, alignment: .leading)
 
-                Button {
-                    newStatusName = ""
-                    showAddStatusSheet = true
-                } label: {
-                    Image(systemName: "plus")
-                }
-                .help("Add Status")
-            }
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Phase")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
 
-            // Phase row
-            HStack(spacing: 8) {
-                Picker("Phase", selection: selectedPhaseBinding) {
-                    Text("None").tag(nil as ProjectStatusPhase?)
-                    ForEach(phasesForSelectedStatus, id: \.id) { p in
-                        Text(p.name).tag(p as ProjectStatusPhase?)
+                    HStack(spacing: 8) {
+                        Picker("", selection: selectedPhaseBinding) {
+                            Text("None").tag(nil as ProjectStatusPhase?)
+                            ForEach(phasesForSelectedStatus, id: \.id) { p in
+                                Text(p.name).tag(p as ProjectStatusPhase?)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        .controlSize(.large)
+                        .frame(minWidth: 180, alignment: .leading)
+                        .disabled(selectedStatusBinding.wrappedValue == nil)
+
+                        Button {
+                            newPhaseName = ""
+                            showAddPhaseSheet = true
+                        } label: {
+                            Image(systemName: "plus")
+                        }
+                        .help("Add Phase for selected Status")
+                        .disabled(selectedStatusBinding.wrappedValue == nil)
                     }
                 }
-                .pickerStyle(.menu)
-                .controlSize(.large)
-                .frame(minWidth: 180, alignment: .leading)
-                .disabled(selectedStatusBinding.wrappedValue == nil)
-
-                Button {
-                    newPhaseName = ""
-                    showAddPhaseSheet = true
-                } label: {
-                    Image(systemName: "plus")
-                }
-                .help("Add Phase for selected Status")
-                .disabled(selectedStatusBinding.wrappedValue == nil)
             }
         }
-        .padding()
+        .padding(.vertical, 4)
         .onChange(of: document.status) { _, newValue in
             Task {
                 if let v = newValue {

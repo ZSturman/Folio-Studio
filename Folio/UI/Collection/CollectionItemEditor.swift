@@ -10,6 +10,8 @@ import SwiftUI
 import UniformTypeIdentifiers
 import AppKit
 import QuickLookThumbnailing
+import SwiftData
+// Import CollectionItemType from JSONCollectionItem.swift
 
 
 
@@ -50,6 +52,12 @@ struct CollectionItemEditor: View {
     @Binding var document: FolioDocument
     @Binding var item: JSONCollectionItem
 
+    @Environment(\.modelContext) private var modelContext
+
+    // Projects for Folio localLink flow
+    @Query(sort: [SortDescriptor(\ProjectDoc.title, order: .forward)])
+    private var allProjects: [ProjectDoc]
+
     let collectionName: String
     let assetsFolder: URL?
     var onDelete: () -> Void
@@ -57,150 +65,383 @@ struct CollectionItemEditor: View {
     @State private var errorMessage: String?
     @State private var isDropTargetedFile = false
     @State private var isDropTargetedThumb = false
+    @State private var showPrivateProjects = false
+    @State private var localType: CollectionItemType
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .firstTextBaseline) {
-                TextField("Item label", text: $item.label)
-                    .textFieldStyle(.roundedBorder)
-                    .frame(maxWidth: 320)
-                    .onChange(of: item.label) { old, new in
-                        guard let assets = assetsFolder else { return }
-                        let colFolder = CollectionFS.collectionsRoot(in: assets).appendingPathComponent(CollectionFS.safeName(collectionName), isDirectory: true)
-                        do {
-                            let newFolder = try CollectionFS.renameItemFolder(collectionFolder: colFolder, oldLabel: old, newLabel: new)
-                            // Rebase edited file
-                            item.filePath.pathToEdited = CollectionFS.rebaseEditedPath(
-                                oldEditedPath: item.filePath.pathToEdited,
-                                oldParent: colFolder.appendingPathComponent(CollectionFS.safeName(old), isDirectory: true),
-                                newParent: newFolder
-                            )
-                            // Rebase thumbnail
-                            item.thumbnail.pathToEdited = CollectionFS.rebaseEditedPath(
-                                oldEditedPath: item.thumbnail.pathToEdited,
-                                oldParent: colFolder.appendingPathComponent(CollectionFS.safeName(old), isDirectory: true),
-                                newParent: newFolder
-                            )
-                            errorMessage = nil
-                        } catch {
-                            errorMessage = error.localizedDescription
-                        }
-                    }
+    init(document: Binding<FolioDocument>,
+         item: Binding<JSONCollectionItem>,
+         collectionName: String,
+         assetsFolder: URL?,
+         onDelete: @escaping () -> Void) {
+        self._document = document
+        self._item = item
+        self.collectionName = collectionName
+        self.assetsFolder = assetsFolder
+        self.onDelete = onDelete
+        _localType = State(initialValue: item.wrappedValue.type)
+    }
 
-                Spacer()
 
-                Menu {
-                    Button(role: .destructive) { onDelete() } label: {
-                        Label("Delete Item", systemImage: "trash")
-                    }
-                } label: {
-                    Image(systemName: "ellipsis.circle")
+    private var urlBinding: Binding<String> {
+        Binding<String>(
+            get: { item.url ?? "" },
+            set: { newValue in
+                let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
+                if trimmed.isEmpty {
+                    item.url = nil
+                    // Do not automatically change type if URL cleared
+                } else {
+                    item.url = trimmed
+                    // Enforce urlLink type and drop any local file reference
+                    item.type = .urlLink
+                    item.filePath = nil
                 }
             }
+        )
+    }
+    
+    private var fileSourceBinding: Binding<CollectionItemType> {
+        Binding<CollectionItemType>(
+            get: {
+                localType
+            },
+            set: { newValue in
+                localType = newValue
+                item.type = newValue
+                switch newValue {
+                case .file:
+                    // Switch to file: clear URL, keep file
+                    item.url = nil
+                    // Do not clear filePath, keep as-is
+                case .urlLink:
+                    // Switch to URL link: clear filePath
+                    item.filePath = nil
+                case .folio:
+                    // Switch to Folio: clear both filePath and URL for now
+                    item.filePath = nil
+                    item.url = nil
+                }
+            }
+        )
+    }
+    
+    private var itemSummaryBinding: Binding<String> {
+        Binding(
+            get: { item.summary ?? "" },
+            set: { item.summary = $0 }
+        )
+    }
 
-            TextEditor(text: Binding(get: { item.summary ?? "" }, set: { item.summary = $0 }))
-                .frame(minHeight: 80)
-                .overlay(RoundedRectangle(cornerRadius: 8).stroke(.secondary.opacity(0.4)))
-                .padding(.trailing, 4)
+    // Project list for localLink/.folio
+    private var filteredProjects: [ProjectDoc] {
+        if showPrivateProjects { return allProjects }
+        return allProjects.filter { $0.isPublic }
+    }
+
+    private func projectIdString(_ p: ProjectDoc) -> String {
+        let mirror = Mirror(reflecting: p)
+        if let idChild = mirror.children.first(where: { $0.label == "id" }) {
+            if let uuidValue = idChild.value as? UUID {
+                return uuidValue.uuidString
+            }
+            if let strValue = idChild.value as? String {
+                return strValue
+            }
+        }
+        return String(describing: p)
+    }
+
+    private func ensureAssetsFolder() -> URL? {
+        // 1. If the document already has an assets folder location, try to resolve it
+        if let loc = document.assetsFolder, let resolved = loc.resolvedURL() {
+            return resolved
+        }
+
+        // 2. Fall back to the URL passed into the editor, and persist it on the document
+        if let u = assetsFolder {
+            if document.assetsFolder == nil {
+                document.assetsFolder = AssetsFolderLocation(url: u)
+            }
+            return u
+        }
+
+        // 3. Create a default folder under the user's Documents directory
+        let fm = FileManager.default
+        if let docs = fm.urls(for: .documentDirectory, in: .userDomainMask).first {
+            let base = docs.appendingPathComponent("FolioAssets", isDirectory: true)
+            do {
+                if !fm.fileExists(atPath: base.path) {
+                    try fm.createDirectory(at: base, withIntermediateDirectories: true)
+                }
+                document.assetsFolder = AssetsFolderLocation(url: base)
+                return base
+            } catch {
+                errorMessage = error.localizedDescription
+                return nil
+            }
+        }
+        return nil
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            // Top row: thumbnail on the left, label on the right
+            HStack(alignment: .top, spacing: 12) {
+                // Thumbnail picker (always copied)
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Thumbnail")
+                        .font(.subheadline)
+                        .bold()
+
+                    if let url = previewURL(for: item.thumbnail.pathToOriginal, edited: item.thumbnail.pathToEdited) {
+                        let readableURL = PermissionHelper.resolvedURL(forOriginalPath: url.path)
+                            ?? (PermissionHelper.isReadable(url) ? url : nil)
+                        if let u = readableURL, let img = NSImage(contentsOf: u) {
+                            VStack(spacing: 6) {
+                                ThumbnailPreviewRow(image: img, title: "Thumbnail") {
+                                    removeThumbnail()
+                                }
+                            }
+                        } else {
+                            PermissionRequiredRow(title: "Thumbnail", url: url) { granted in
+                                // Always copy thumbnails into assets after permission is granted.
+                                copyThumbnailIntoAssets(from: granted)
+                            }
+                        }
+                    } else {
+                        DropTargetView(
+                            isTargeted: $isDropTargetedThumb,
+                            title: "Drop thumbnail image or click to browse",
+                            acceptImagesOnly: true
+                        ) { url in
+                            copyThumbnailIntoAssets(from: url)
+                        }
+                        .onTapGesture { pickImageForThumbnail() }
+                    }
+                }
+                .frame(maxWidth: 220)
+
+                VStack(alignment: .leading, spacing: 8) {
+                    TextField("Item label", text: $item.label)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(maxWidth: 320)
+                        .onChange(of: item.label) { old, new in
+                            guard let assets = ensureAssetsFolder() else { return }
+                            let colFolder = CollectionFS.collectionsRoot(in: assets)
+                                .appendingPathComponent(CollectionFS.safeName(collectionName), isDirectory: true)
+                            do {
+                                let oldFolder = colFolder.appendingPathComponent(CollectionFS.safeName(old), isDirectory: true)
+                                let newFolder = try CollectionFS.renameItemFolder(collectionFolder: colFolder,
+                                                                                  oldLabel: old,
+                                                                                  newLabel: new)
+                                // Rebase edited file, if present
+                                if var fp = item.filePath {
+                                    fp.pathToEdited = CollectionFS.rebaseEditedPath(
+                                        oldEditedPath: fp.pathToEdited,
+                                        oldParent: oldFolder,
+                                        newParent: newFolder
+                                    )
+                                    item.filePath = fp
+                                }
+                                // Rebase thumbnail
+                                item.thumbnail.pathToEdited = CollectionFS.rebaseEditedPath(
+                                    oldEditedPath: item.thumbnail.pathToEdited,
+                                    oldParent: oldFolder,
+                                    newParent: newFolder
+                                )
+                                errorMessage = nil
+                            } catch {
+                                errorMessage = error.localizedDescription
+                            }
+                        }
+                }
+
+                Spacer()
+            }
+
+            // Summary, styled similarly to BasicInfoTabView
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Summary")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                ZStack(alignment: .topLeading) {
+                    if itemSummaryBinding.wrappedValue.isEmpty {
+                        Text("Write a short overview of this item...")
+                            .foregroundStyle(.secondary)
+                            .padding(EdgeInsets(top: 8, leading: 10, bottom: 0, trailing: 0))
+                    }
+
+                    TextEditor(text: itemSummaryBinding)
+                        .frame(minHeight: 100)
+                        .padding(8)
+                        .scrollContentBackground(.hidden)
+                }
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .strokeBorder(.quaternary)
+                )
+            }
+            .padding(.trailing, 4)
 
             // Original file picker + copy
             VStack(alignment: .leading, spacing: 8) {
-                Text("File").font(.subheadline).bold()
-
-                if let url = previewURL(for: item.filePath.pathToOriginal, edited: item.filePath.pathToEdited) {
-                    // If unreadable, let the user grant permission rather than reverting to drop target.
-                    if PermissionHelper.isReadable(url) || PermissionHelper.resolvedURL(forOriginalPath: url.path) != nil {
-                        let effectiveURL = PermissionHelper.resolvedURL(forOriginalPath: url.path) ?? url
-                        let preloaded = NSImage(contentsOf: effectiveURL)
-                        FilePreviewRow(url: effectiveURL, title: "File", preloadedImage: preloaded) {
-                            removeItemFile()
-                        }
-                    } else {
-                        PermissionRequiredRow(title: "File", url: url) { granted in
-                            // Prefer to point to the exact granted URL for future reads
-                            if item.filePath.pathToEdited.isEmpty {
-                                item.filePath.pathToOriginal = granted.path
-                            } else {
-                                item.filePath.pathToEdited = granted.path
-                            }
-                        }
-                    }
-                } else {
-                    DropTargetView(
-                        isTargeted: $isDropTargetedFile,
-                        title: "Drag a file here or click to browse"
-                    ) { url in
-                        item.filePath.pathToOriginal = url.path
-                    }
-                    .onTapGesture { pickFileForOriginal() }
-                }
-
-                if !item.filePath.pathToOriginal.isEmpty {
-                    LabeledContent("Original") { Text(item.filePath.pathToOriginal).font(.footnote).textSelection(.enabled) }
-                }
-                if !item.filePath.pathToEdited.isEmpty {
-                    LabeledContent("Edited") { Text(item.filePath.pathToEdited).font(.footnote).textSelection(.enabled) }
-                }
-
+                
                 HStack {
-                    Button {
-                        copyOriginalIntoAssets()
-                    } label: {
-                        Label("Copy to assets folder", systemImage: "arrow.down.doc")
-                    }
-                    .disabled(!(assetsFolder != nil && !item.label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !item.filePath.pathToOriginal.isEmpty))
-
+                    Text("File").font(.subheadline).bold()
                     Spacer()
+                    Picker("Source", selection: fileSourceBinding) {
+                        Text("File").tag(CollectionItemType.file)
+                        Text("URL").tag(CollectionItemType.urlLink)
+                        Text("Folio").tag(CollectionItemType.folio)
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(maxWidth: 320)
                 }
-            }
-
-
-            // Thumbnail picker (always copied)
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Thumbnail").font(.subheadline).bold()
-
-                if let url = previewURL(for: item.thumbnail.pathToOriginal, edited: item.thumbnail.pathToEdited) {
-                    let readableURL = PermissionHelper.resolvedURL(forOriginalPath: url.path) ?? (PermissionHelper.isReadable(url) ? url : nil)
-                    if let u = readableURL, let img = NSImage(contentsOf: u) {
-                        VStack(spacing: 6) {
-                            ThumbnailPreviewRow(image: img, title: "Thumbnail") {
-                                removeThumbnail()
+                
+                switch item.type {
+                    case .file:
+                        if let url = previewURL(for: item.filePath?.pathToOriginal ?? "", edited: item.filePath?.pathToEdited ?? "") {
+                            // If unreadable, let the user grant permission rather than reverting to drop target.
+                            if PermissionHelper.isReadable(url) || PermissionHelper.resolvedURL(forOriginalPath: url.path) != nil {
+                                let effectiveURL = PermissionHelper.resolvedURL(forOriginalPath: url.path) ?? url
+                                let preloaded = NSImage(contentsOf: effectiveURL)
+                                FilePreviewRow(url: effectiveURL, title: "File", preloadedImage: preloaded) {
+                                    removeItemFile()
+                                }
+                            } else {
+                                PermissionRequiredRow(title: "File", url: url) { granted in
+                                    // Prefer to point to the exact granted URL for future reads
+                                    if var fp = item.filePath {
+                                        if fp.pathToEdited.isEmpty {
+                                            fp.pathToOriginal = granted.path
+                                        } else {
+                                            fp.pathToEdited = granted.path
+                                        }
+                                        item.filePath = fp
+                                    } else {
+                                        var fp = AssetPath()
+                                        fp.pathToOriginal = granted.path
+                                        item.filePath = fp
+                                    }
+                                    item.type = .file
+                                    item.url = nil
+                                }
+                            }
+                        } else {
+                            DropTargetView(
+                                isTargeted: $isDropTargetedFile,
+                                title: "Drag a file here or click to browse"
+                            ) { url in
+                                var fp = item.filePath ?? AssetPath()
+                                fp.pathToOriginal = url.path
+                                item.filePath = fp
+                                item.type = .file
+                                item.url = nil
+                            }
+                            .onTapGesture { pickFileForOriginal() }
+                        }
+                        
+                        if let fp = item.filePath, !fp.pathToOriginal.isEmpty {
+                            LabeledContent("Original") { Text(fp.pathToOriginal).font(.footnote).textSelection(.enabled) }
+                        }
+                        if let fp = item.filePath, !fp.pathToEdited.isEmpty {
+                            LabeledContent("Edited") { Text(fp.pathToEdited).font(.footnote).textSelection(.enabled) }
+                        }
+                        
+                        HStack {
+                            Button {
+                                copyOriginalIntoAssets()
+                            } label: {
+                                Label("Copy to assets folder", systemImage: "arrow.down.doc")
+                            }
+                            .disabled(item.label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || (item.filePath?.pathToOriginal ?? "").isEmpty)
+                            
+                            Spacer()
+                        }
+                    case .urlLink:
+                        VStack(alignment: .leading, spacing: 6) {
+                            TextField("https://example.com", text: urlBinding)
+                                .textFieldStyle(.roundedBorder)
+                            if let urlString = item.url, !urlString.isEmpty {
+                                Text(urlString)
+                                    .font(.footnote)
+                                    .foregroundStyle(.secondary)
+                                    .textSelection(.enabled)
                             }
                         }
-                    } else {
-                        PermissionRequiredRow(title: "Thumbnail", url: url) { granted in
-                            // Always copy thumbnails into assets after permission is granted.
-                            copyThumbnailIntoAssets(from: granted)
+                    case .folio:
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack {
+                                Text("Folio Project")
+                                    .font(.subheadline)
+                                    .bold()
+                                Spacer()
+                                Picker("Project", selection: Binding(
+                                    get: {
+                                        filteredProjects
+                                            .first(where: { projectIdString($0) == (item.url ?? "") })
+                                            .map { projectIdString($0) } ?? ""
+                                    },
+                                    set: { newValue in
+                                        item.url = newValue.isEmpty ? nil : newValue
+                                    })
+                                ) {
+                                    if filteredProjects.isEmpty {
+                                        Text("None").tag("")
+                                    } else {
+                                        ForEach(filteredProjects, id: \.self) { p in
+                                            Text(p.title).tag(projectIdString(p))
+                                        }
+                                    }
+                                }
+                                .pickerStyle(.menu)
+                                .frame(maxWidth: 260)
+                            }
+                            
+                            Toggle("Show private projects", isOn: $showPrivateProjects)
+                                .toggleStyle(.switch)
+                            
+                            if showPrivateProjects {
+                                Text("Warning: selecting a private project may cause downstream access issues.")
+                                    .font(.footnote)
+                                    .foregroundStyle(.orange)
+                            }
+                            
+                            if let selectedId = item.url,
+                               let project = filteredProjects.first(where: { projectIdString($0) == selectedId }) {
+                                LabeledContent("Selected") {
+                                    Text(project.title)
+                                        .font(.footnote)
+                                        .textSelection(.enabled)
+                                }
+                            
                         }
                     }
-                } else {
-                    DropTargetView(
-                        isTargeted: $isDropTargetedThumb,
-                        title: "Drop thumbnail image or click to browse",
-                        acceptImagesOnly: true
-                    ) { url in
-                        copyThumbnailIntoAssets(from: url)
-                    }
-                    .onTapGesture { pickImageForThumbnail() }
                 }
+                
 
-                if !item.thumbnail.pathToOriginal.isEmpty {
-                    LabeledContent("Source") { Text(item.thumbnail.pathToOriginal).font(.footnote).textSelection(.enabled) }
+                    ResourcePickerView(resource: $item.resource, currentDocumentURL: nil)
+                        .padding(.top, 6)
+                
+                Button(role: .destructive) { onDelete() } label: {
+                    Label("Delete Item", systemImage: "trash")
                 }
-                if !item.thumbnail.pathToEdited.isEmpty {
-                    LabeledContent("Copied") { Text(item.thumbnail.pathToEdited).font(.footnote).textSelection(.enabled) }
+                
+                
+                if let err = errorMessage {
+                    Text(err).font(.caption).foregroundStyle(.red)
+                }
+            }
+            .onAppear {
+                let currentType = item.type
+                if currentType == .folio,
+                   (item.url ?? "").isEmpty,
+                   let first = filteredProjects.first {
+                    item.url = projectIdString(first)
                 }
             }
 
-            // Optional: Resource picker
-            DisclosureGroup("Resource") {
-                ResourcePickerView(resource: $item.resource, currentDocumentURL: nil)
-                    .padding(.top, 6)
-            }
-
-            if let err = errorMessage {
-                Text(err).font(.caption).foregroundStyle(.red)
-            }
         }
     }
 
@@ -213,14 +454,15 @@ struct CollectionItemEditor: View {
 
     private func removeItemFile() {
         // Delete edited file if it exists on disk
-        if !item.filePath.pathToEdited.isEmpty {
+        if let edited = item.filePath?.pathToEdited, !edited.isEmpty {
             let fm = FileManager.default
-            let p = item.filePath.pathToEdited
-            if fm.fileExists(atPath: p) { try? fm.removeItem(atPath: p) }
+            if fm.fileExists(atPath: edited) { try? fm.removeItem(atPath: edited) }
         }
-        // Clear both paths to restore drop UI
-        item.filePath.pathToOriginal = ""
-        item.filePath.pathToEdited = ""
+        // Clear file reference entirely
+        item.filePath = nil
+        if item.type == .file {
+            item.type = .file // keep as file, but with no file attached
+        }
     }
 
     private func removeThumbnail() {
@@ -241,7 +483,12 @@ struct CollectionItemEditor: View {
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = false
         if panel.runModal() == .OK, let url = panel.url {
-            item.filePath.pathToOriginal = url.path
+            var fp = item.filePath ?? AssetPath()
+            fp.pathToOriginal = url.path
+            fp.pathToEdited = ""
+            item.filePath = fp
+            item.type = .file
+            item.url = nil
         }
     }
 
@@ -257,15 +504,20 @@ struct CollectionItemEditor: View {
     }
 
     private func copyOriginalIntoAssets() {
-        guard let assets = assetsFolder else { return }
+        guard let assets = ensureAssetsFolder() else { return }
         guard !item.label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        guard !item.filePath.pathToOriginal.isEmpty else { return }
+        guard let fp = item.filePath, !fp.pathToOriginal.isEmpty else { return }
         do {
             let colFolder = try CollectionFS.ensureCollectionFolder(assetsFolder: assets, name: collectionName)
             let itemFolder = try CollectionFS.ensureItemFolder(collectionFolder: colFolder, itemLabel: item.label)
-            let src = URL(fileURLWithPath: item.filePath.pathToOriginal)
+            let src = URL(fileURLWithPath: fp.pathToOriginal)
             let copied = try CollectionFS.copyWithCollision(from: src, to: itemFolder)
-            item.filePath.pathToEdited = copied.path
+
+            var newFP = fp
+            newFP.pathToEdited = copied.path
+            item.filePath = newFP
+            item.type = .file
+            item.url = nil
             errorMessage = nil
         } catch {
             errorMessage = error.localizedDescription
@@ -273,7 +525,7 @@ struct CollectionItemEditor: View {
     }
 
     private func copyThumbnailIntoAssets(from src: URL) {
-        guard let assets = assetsFolder else { return }
+        guard let assets = ensureAssetsFolder() else { return }
         guard !item.label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         do {
             let colFolder = try CollectionFS.ensureCollectionFolder(assetsFolder: assets, name: collectionName)
@@ -291,5 +543,36 @@ struct CollectionItemEditor: View {
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+}
+
+// MARK: - AssetsFolderLocation helpers
+extension AssetsFolderLocation {
+    init(url: URL) {
+        self.path = url.path
+        self.bookmarkData = try? url.bookmarkData(
+            options: [.withSecurityScope],
+            includingResourceValuesForKeys: nil,
+            relativeTo: nil
+        )
+    }
+
+    /// Resolve to a usable URL, preferring the bookmark if available, falling back to the stored path.
+    func resolvedURL() -> URL? {
+        if let data = bookmarkData {
+            var isStale = false
+            if let url = try? URL(
+                resolvingBookmarkData: data,
+                options: [.withSecurityScope],
+                relativeTo: nil,
+                bookmarkDataIsStale: &isStale
+            ) {
+                return url
+            }
+        }
+        if let path {
+            return URL(fileURLWithPath: path)
+        }
+        return nil
     }
 }

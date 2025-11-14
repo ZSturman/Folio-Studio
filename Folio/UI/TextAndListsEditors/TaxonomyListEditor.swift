@@ -66,10 +66,11 @@ struct TaxonomyListEditor: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(title).font(.headline)
+    
 
             // Chips-style list with delete
             WrapHStack(spacing: 6, lineSpacing: 6) {
+                Text(title).font(.headline)
                 ForEach(items, id: \.self) { item in
                     HStack(spacing: 6) {
                         Text(item)
@@ -107,7 +108,7 @@ struct TaxonomyListEditor: View {
                     .padding(.vertical, 4)
                 }
                 .frame(maxHeight: 56)
-            Divider().padding(.vertical, 6)
+  
 
         }
         .onAppear { lastCommitted = items }

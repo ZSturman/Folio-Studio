@@ -7,9 +7,11 @@
 
 // EditedSidecar.swift
 import Foundation
+import CoreGraphics
 
 struct EditedSidecar: Codable {
     var transform: UserTransform
+    var aspectOverride: CGSize?
 }
 
 enum EditedSidecarIO {

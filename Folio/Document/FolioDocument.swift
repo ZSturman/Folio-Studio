@@ -1,5 +1,5 @@
 //
-//  DocumentParser.swift
+//  FolioDocument.swift
 //  Folio
 //
 //  Created by Zachary Sturman on 11/4/25.
@@ -10,6 +10,8 @@ import SwiftUI
 import UniformTypeIdentifiers
 import Combine
 import SwiftData
+
+
 
 
 // MARK: - Document
@@ -37,7 +39,8 @@ struct FolioDocument: FileDocument, Codable {
     
     // MEDIA
     var images: [String: AssetPath] = [:]
-    var assetsFolder: URL?
+    var assetsFolder: AssetsFolderLocation?
+
     
     // CLASSIFICATION
     var tags: [String] = []
@@ -53,10 +56,12 @@ struct FolioDocument: FileDocument, Codable {
     var resources: [JSONResource] = []
     
     // COLLECTION
-    var collection: [String: [JSONCollectionItem]] = [:]
+    var collection: [String: CollectionSection] = [:]
     
     // OTHER K:V
+    var details: [DetailItem] = []
     var values: [String: JSONValue]
+
 
     
     // New empty document
@@ -72,11 +77,6 @@ struct FolioDocument: FileDocument, Codable {
         self.requiresFollowUp = false
         
         self.values = [:]
-        
-        
-        #if DEBUG
-        print("[FolioDocument] init() called; id=\(id), isPublic=\(isPublic), tags=\(tags.count), mediums=\(mediums.count), genres=\(genres.count), topics=\(topics.count), subjects=\(subjects.count)")
-        #endif
     }
 
     // READ hook
@@ -110,40 +110,25 @@ struct FolioDocument: FileDocument, Codable {
         self.story = decoded.story
         self.resources = decoded.resources
         self.collection = decoded.collection
+        self.details = decoded.details
         self.values = decoded.values
         
-        #if DEBUG
-        print("[FolioDocument] init(configuration:) loaded; id=\(id), title=\(title), url=\(filePath?.path ?? "Unknown"), tags=\(tags.count), mediums=\(mediums.count), genres=\(genres.count), topics=\(topics.count), subjects=\(subjects.count), resources=\(resources.count)")
-        #endif
     }
 
     func snapshot(contentType: UTType) throws -> Data {
-        #if DEBUG
-        print("[FolioDocument] snapshot(contentType:) called; id=\(id), contentType=\(contentType.identifier), title=\(title), onMain=\(Thread.isMainThread)")
-        #endif
-
         // Encode the document state and report size
         let data = try JSONEncoder().encode(self)
-        #if DEBUG
-        print("[FolioDocument] snapshot encoded; id=\(id), bytes=\(data.count))")
-        #endif
         return data
     }
     
     // SAVE hook entry point required by FileDocument
     func fileWrapper(configuration: WriteConfiguration) throws -> FileWrapper {
-        #if DEBUG
-        print("[FolioDocument] fileWrapper(configuration:) called; id=\(id), contentType=\(configuration.contentType.identifier)")
-        #endif
         let data = try snapshot(contentType: configuration.contentType)
         return try fileWrapper(snapshot: data, configuration: configuration)
     }
 
     // SAVE hook continuation
     func fileWrapper(snapshot: Data, configuration: WriteConfiguration) throws -> FileWrapper {
-        #if DEBUG
-        print("[FolioDocument] fileWrapper called; id=\(id), url=\(filePath?.path ?? "nil"), bytes=\(snapshot.count)")
-        #endif
         return .init(regularFileWithContents: snapshot)
     }
 
@@ -180,6 +165,7 @@ struct FolioDocument: FileDocument, Codable {
         case resources
 
         case collection
+        case details
 
     }
 
@@ -205,7 +191,18 @@ struct FolioDocument: FileDocument, Codable {
         self.updatedAt = try c.decodeIfPresent(Date.self, forKey: .updatedAt)
 
         self.images = try c.decodeIfPresent([String: AssetPath].self, forKey: .images) ?? [:]
-        self.assetsFolder = try c.decodeIfPresent(URL.self, forKey: .assetsFolder)
+        // Backwards-compatible decode for assetsFolder:
+        //  - New format: AssetsFolderLocation (dictionary)
+        //  - Legacy formats: String path or URL
+        if let loc = try? c.decodeIfPresent(AssetsFolderLocation.self, forKey: .assetsFolder) {
+            self.assetsFolder = loc
+        } else if let legacyPath = try? c.decodeIfPresent(String.self, forKey: .assetsFolder) {
+            self.assetsFolder = AssetsFolderLocation(path: legacyPath, bookmarkData: nil)
+        } else if let legacyURL = try? c.decodeIfPresent(URL.self, forKey: .assetsFolder) {
+            self.assetsFolder = AssetsFolderLocation(url: legacyURL)
+        } else {
+            self.assetsFolder = nil
+        }
 
         self.tags = try c.decodeIfPresent([String].self, forKey: .tags) ?? []
         self.mediums = try c.decodeIfPresent([String].self, forKey: .mediums) ?? []
@@ -216,7 +213,26 @@ struct FolioDocument: FileDocument, Codable {
         self.description = try c.decodeIfPresent(String.self, forKey: .description)
         self.story = try c.decodeIfPresent(String.self, forKey: .story)
         self.resources = try c.decodeIfPresent([JSONResource].self, forKey: .resources) ?? []
-        self.collection = try c.decodeIfPresent([String: [JSONCollectionItem]].self, forKey: .collection) ?? [:]
+        if let newCollection = try c.decodeIfPresent([String: CollectionSection].self, forKey: .collection) {
+            self.collection = newCollection
+        } else if let legacyCollection = try c.decodeIfPresent([String: [JSONCollectionItem]].self, forKey: .collection) {
+            self.collection = legacyCollection.mapValues { items in
+                CollectionSection(images: [:], items: items)
+            }
+        } else {
+            self.collection = [:]
+        }
+        
+        if let items = try c.decodeIfPresent([DetailItem].self, forKey: .details) {
+            self.details = items
+        } else if let legacyDict = try c.decodeIfPresent([String: JSONValue].self, forKey: .details) {
+            // Backwards compatibility: convert old [String: JSONValue] -> [DetailItem]
+            self.details = legacyDict.map { key, value in
+                DetailItem(key: key, value: value)
+            }
+        } else {
+            self.details = []
+        }
 
         // Sweep extras
         let all = try decoder.container(keyedBy: AnyCodingKey.self)
@@ -262,6 +278,7 @@ struct FolioDocument: FileDocument, Codable {
         try c.encodeIfPresent(story, forKey: .story)
         if !resources.isEmpty { try c.encode(resources, forKey: .resources) }
         if !collection.isEmpty { try c.encode(collection, forKey: .collection) }
+        if !details.isEmpty { try c.encode(details, forKey: .details) }
 
         var dyn = encoder.container(keyedBy: AnyCodingKey.self)
         for (k, v) in values {

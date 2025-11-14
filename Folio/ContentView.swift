@@ -5,6 +5,7 @@
 //  Created by Zachary Sturman on 11/2/25.
 //
 
+
 import SwiftUI
 import SwiftData
 
@@ -18,16 +19,28 @@ struct ContentView: View {
     
     
     @State private var selection: SidebarTab? = .basicInfo
+
+    @State private var basicInfoSubtab: BasicInfoSubtab? = .main
+    @State private var contentSubtab:   ContentSubtab?   = .summary
+
+    @State private var selectedResourceIndex: Int?
+    @State private var selectedCollectionItem: CollectionTabView.SelectedItem?
+    @State private var selectedImageLabel: ImageLabel = .thumbnail
     
     var fileURL: URL?
 
     var body: some View {
         NavigationSplitView {
+            // 1st column: main sidebar
             SidebarTabsView(selection: $selection)
-#if os(macOS)
                 .navigationSplitViewColumnWidth(min: 180, ideal: 200)
-#endif
+
+        } content: {
+            secondarySidebar
+                .padding(.horizontal, 4)
+
         } detail: {
+            // 3rd column: the actual editor / detail
             Group {
                 if let selection {
                     ScrollView {
@@ -70,19 +83,97 @@ struct ContentView: View {
     private func detailView(for tab: SidebarTab) -> some View {
         switch tab {
         case .basicInfo:
-            BasicInfoTabView(document: $document)
-        case .collection:
-            CollectionTabView(document: $document)
+            switch basicInfoSubtab ?? .main {
+            case .main:
+                // your existing main basic info view
+                BasicInfoTabView(document: $document)
+
+            case .classification:
+                // a different view or mode for classification
+                BasicInfoClassificationView(document: $document)
+
+            case .details:
+                BasicInfoDetailsView(document: $document)
+            }
+
         case .content:
-            ContentTabView(document: $document)
+            switch contentSubtab ?? .summary {
+            case .summary:
+                DocumentTextSection(
+                    title: "Summary",
+                    text: Binding(
+                        get: { document.summary },
+                        set: { document.summary = $0 }
+                    )
+                )
+            case .description:
+     
+                DocumentTextSection(
+                    title: "Description",
+                    text: Binding(
+                        get: { document.description ?? "" },
+                        set: { document.description = $0 }
+                    )
+                )
+                
+            case .resources:
+                ResourcesDetailView(document: $document)
+                
+                
+            }
+            
+        
+
         case .media:
-            MediaTabView(document: $document)
-        case .other:
-            OtherTabView(document: $document)
-        case .tagsAndClassification:
-            TagsAndClassificationTabView(document: $document)
+            MediaDetailView(document: $document, selectedImageLabel: $selectedImageLabel)
+                .navigationTitle(selectedImageLabel.title)
+
+        case .collection:
+            CollectionTabView(
+                document: $document,
+                selectedItem: $selectedCollectionItem
+            )
+
         case .settings:
             SettingsView()
+        }
+    }
+    
+    @ViewBuilder
+    private var secondarySidebar: some View {
+        switch selection {
+        case .basicInfo:
+            List(BasicInfoSubtab.allCases, selection: $basicInfoSubtab) { sub in
+                Text(sub.title)
+                    .tag(sub)
+            }
+            .navigationTitle("Basic Info")
+
+        case .content:
+            List(ContentSubtab.allCases, selection: $contentSubtab) { sub in
+                Text(sub.title)
+                    .tag(sub)
+            }
+            .navigationTitle("Content")
+
+
+        case .media:
+            MediaSecondarySidebar(
+                document: $document,
+                selectedImageLabel: $selectedImageLabel
+            )
+            .navigationTitle("Media")
+
+        case .collection:
+            CollectionSidebar(
+                document: $document,
+                selectedItem: $selectedCollectionItem
+            )
+            .navigationTitle("Collection")
+
+        case .settings, .none:
+            Text("No secondary options")
+                .foregroundStyle(.secondary)
         }
     }
 }

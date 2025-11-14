@@ -12,36 +12,15 @@ struct PrivacyToggle: View {
     @Binding var document: FolioDocument
 
     var body: some View {
-        Button(action: {
-            withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-                document.isPublic.toggle()
+        Toggle(isOn: $document.isPublic) {
+            HStack(spacing: 8) {
+                Image(systemName: document.isPublic ? "globe" : "lock.fill")
+                Text("Public")
             }
-        }) {
-            HStack {
-                // Icons
-                Image(systemName: "lock.fill")
-                    .foregroundColor(document.isPublic ? .gray : .white)
-                    .opacity(document.isPublic ? 1 : 0.5)
-                Spacer()
-                Image(systemName: "globe")
-                    .foregroundColor(document.isPublic ? .gray : .white)
-                    .opacity(document.isPublic ? 0.5 : 1)
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
-            .background(
-                ZStack(alignment: document.isPublic ?  .trailing : .leading) {
-                    RoundedRectangle(cornerRadius: 20)
-                        .fill(Color.gray.opacity(0.2))
-                    Circle()
-                        .fill(document.isPublic ? Color.green : Color.blue )
-                        .frame(width: 30, height: 30)
-                        .padding(3)
-                }
-            )
-            .frame(width: 100, height: 40)
         }
-        .accessibilityLabel(document.isPublic ? "Public" : "Private" )
+        #if os(macOS)
+        .toggleStyle(.checkbox)
+        #endif
         .onChange(of: document.isPublic) { _, isPublic in
             Task {
                 let r = sdc.enqueueIsPublicChange(isPublic, for: $document.wrappedValue.id)

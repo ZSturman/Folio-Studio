@@ -7,30 +7,39 @@
 
 import Foundation
 
+enum CollectionItemType: String, Codable, CaseIterable {
+    case file = "File"
+    case urlLink = "URL"
+    case folio = "Folio"
+}
+
 struct JSONCollectionItem: Codable, Hashable, Sendable, Identifiable {
     let id: UUID
-    var type: String
+    var type: CollectionItemType
     var label: String
     var summary: String?
-    var filePath: AssetPath
+    var filePath: AssetPath?
+    var url: String?
     var thumbnail: AssetPath
     var resource: JSONResource
-
+    
     init(
-            id: UUID = UUID(),
-            type: String = "",
-            label: String = "",
-            summary: String? = nil,
-            filePath: AssetPath = AssetPath(),
-            thumbnail: AssetPath = AssetPath(),
-            resource: JSONResource = JSONResource()
-        ) {
-            self.id = id
-            self.type = type
-            self.label = label
-            self.summary = summary
-            self.filePath = filePath
-            self.thumbnail = thumbnail
-            self.resource = resource
-        }
+        id: UUID = UUID(),
+        type: CollectionItemType = .file,
+        label: String = "",
+        summary: String? = nil,
+        filePath: AssetPath? = nil,
+        url: String? = nil,
+        thumbnail: AssetPath = AssetPath(),
+        resource: JSONResource = JSONResource()
+    ) {
+        self.id = id
+        self.type = type
+        self.label = label
+        self.summary = summary
+        self.filePath = filePath
+        self.url = url
+        self.thumbnail = thumbnail
+        self.resource = resource
+    }
 }

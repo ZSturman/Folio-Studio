@@ -44,21 +44,34 @@ struct ResourcePickerView: View {
     private var selectedCategoryBinding: Binding<ResourceItemCategory?> {
         Binding<ResourceItemCategory?>(
             get: {
-                categories.first(where: { $0.name == resource.category })
+                // If we already match a category, use it
+                if let exact = categories.first(where: { $0.name == resource.category }) {
+                    return exact
+                }
+                // Otherwise, if there are categories, snap to the first one
+                if let first = categories.first {
+                    if resource.category != first.name {
+                        DispatchQueue.main.async {
+                            resource.category = first.name
+                        }
+                    }
+                    return first
+                }
+                // No categories at all
+                return nil
             },
             set: { newValue in
-                if let c = newValue {
-                    resource.category = c.name
-                    // Snap type to first available for new category
-                    let first = allTypes
-                        .filter { $0.category.id == c.id }
-                        .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
-                        .first
-                    resource.type = first?.name ?? ""
-                } else {
-                    resource.category = ""
-                    resource.type = ""
-                }
+                // Ignore nil; we never intentionally clear to an "empty" category
+                guard let c = newValue else { return }
+
+                resource.category = c.name
+                // Snap type to first available for new category
+                let first = allTypes
+                    .filter { $0.category.id == c.id }
+                    .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+                    .first
+                resource.type = first?.name ?? ""
+
                 // Reset URL UI when category changes
                 pickedFileURL = nil
                 copySuggestionVisible = false
@@ -71,11 +84,26 @@ struct ResourcePickerView: View {
         Binding<ResourceItemType?>(
             get: {
                 guard let cat = selectedCategoryBinding.wrappedValue else { return nil }
-                let options = allTypes.filter { $0.category.id == cat.id }
-                return options.first(where: { $0.name == resource.type })
+                let options = allTypes
+                    .filter { $0.category.id == cat.id }
+                    .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+
+                if let exact = options.first(where: { $0.name == resource.type }) {
+                    return exact
+                }
+                if let first = options.first {
+                    if resource.type != first.name {
+                        DispatchQueue.main.async {
+                            resource.type = first.name
+                        }
+                    }
+                    return first
+                }
+                return nil
             },
             set: { newValue in
-                if let t = newValue { resource.type = t.name } else { resource.type = "" }
+                guard let t = newValue else { return }
+                resource.type = t.name
             }
         )
     }
@@ -88,8 +116,8 @@ struct ResourcePickerView: View {
     }
 
     // Category switches
-    private var isLocalDownload: Bool { resource.category.caseInsensitiveCompare("localDownload") == .orderedSame }
-    private var isLocalLink: Bool { resource.category.caseInsensitiveCompare("localLink") == .orderedSame }
+    private var isLocalDownload: Bool { resource.category.caseInsensitiveCompare("download") == .orderedSame }
+    private var isLocalLink: Bool { resource.category.caseInsensitiveCompare("folio") == .orderedSame }
 
     // Project list for localLink
     private var filteredProjects: [ProjectDoc] {
@@ -102,57 +130,72 @@ struct ResourcePickerView: View {
 
             // Category + conditional "Type"/Project picker
             HStack(spacing: 8) {
-                Picker("Category", selection: selectedCategoryBinding) {
-                    if categories.isEmpty {
-                        Text("None").tag(nil as ResourceItemCategory?)
-                    } else {
+                if categories.isEmpty {
+                    Text("No categories available")
+                        .foregroundStyle(.secondary)
+                } else {
+                    Picker("Category", selection: selectedCategoryBinding) {
                         ForEach(categories, id: \.id) { c in
                             Text(c.name.capitalized).tag(c as ResourceItemCategory?)
                         }
                     }
+                    .pickerStyle(.menu)
                 }
-                .pickerStyle(.menu)
-                .disabled(categories.isEmpty)
 
                 if isLocalLink {
                     // Project picker replaces Type
-                    Picker("Project", selection: Binding(
-                        get: {
-                            // Map resource.url to a ProjectDoc if possible
-                            filteredProjects.first(where: { projectIdString($0) == resource.url })
-                                .map { projectIdString($0) } ?? ""
-                        },
-                        set: { newValue in
-                            resource.url = newValue
-                            // Also set type to selected project's title
-                            if let selected = filteredProjects.first(where: { projectIdString($0) == newValue }) {
+                    let projects = filteredProjects
+                    if projects.isEmpty {
+                        Text("No projects available")
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Picker("Project", selection: Binding(
+                            get: {
+                                // Map resource.url to a ProjectDoc if possible
+                                if let match = projects.first(where: { projectIdString($0) == resource.url }) {
+                                    return projectIdString(match)
+                                }
+                                // Fallback: snap to the first project
+                                if let first = projects.first {
+                                    let id = projectIdString(first)
+                                    if resource.url != id || resource.type != first.title {
+                                        DispatchQueue.main.async {
+                                            resource.url = id
+                                            resource.type = first.title
+                                        }
+                                    }
+                                    return id
+                                }
+                                return ""
+                            },
+                            set: { newValue in
+                                // Also set type to selected project's title
+                                guard let selected = projects.first(where: { projectIdString($0) == newValue }) else { return }
+                                resource.url = newValue
                                 resource.type = selected.title
-                            }
-                        })
-                    ) {
-                        if filteredProjects.isEmpty {
-                            Text("None").tag("")
-                        } else {
-                            ForEach(filteredProjects, id: \.self) { p in
+                            })
+                        ) {
+                            ForEach(projects, id: \.self) { p in
                                 Text(p.title).tag(projectIdString(p))
                             }
                         }
+                        .pickerStyle(.menu)
                     }
-                    .pickerStyle(.menu)
                 } else {
-                    // Normal Type picker for everything except localLink
-                    Picker("Type", selection: selectedTypeBinding) {
-                        let options = typesForSelectedCategory
-                        if options.isEmpty {
-                            Text("None").tag(nil as ResourceItemType?)
-                        } else {
+                    // Normal Type UI for everything except localLink
+                    let options = typesForSelectedCategory
+                    if options.isEmpty {
+                        Text("No types for this category")
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Picker("Type", selection: selectedTypeBinding) {
                             ForEach(options, id: \.id) { t in
                                 Text(t.name.capitalized).tag(t as ResourceItemType?)
                             }
                         }
+                        .pickerStyle(.menu)
+                        .disabled(isLocalDownload)
                     }
-                    .pickerStyle(.menu)
-                    .disabled(typesForSelectedCategory.isEmpty || isLocalDownload)
                 }
             }
 
@@ -370,36 +413,6 @@ private struct DropTarget: View {
         .accessibilityAddTraits(.isButton)
     }
 }
-//
-//// MARK: - Preview
-//
-//#Preview {
-//    // Preview with an in-memory container. Seeds once.
-//    let config = ModelConfiguration(isStoredInMemoryOnly: true)
-//    let container = try! ModelContainer(for: ResourceItemCategory.self, ResourceItemType.self, ProjectDoc.self, configurations: config)
-//    let context = ModelContext(container)
-//
-//    if try! context.fetch(FetchDescriptor<ResourceItemCategory>()).isEmpty {
-//        try! seedResourceCatalog(in: context, addedVia: .system)
-//    }
-//
-//    // Minimal seed for projects
-//    if try! context.fetch(FetchDescriptor<ProjectDoc>()).isEmpty {
-//        let pub = ProjectDoc(name: "Public Project", isPublic: true)
-//        let priv = ProjectDoc(name: "Private Project", isPublic: false)
-//        context.insert(pub)
-//        context.insert(priv)
-//        try! context.save()
-//    }
-//
-//    let sample = JSONResource(label: "Design Doc",
-//                              category: try! context.fetch(FetchDescriptor<ResourceItemCategory>()).first?.name ?? "",
-//                              type: "",
-//                              url: "https://example.com/spec")
-//
-//    ResourcePickerView(resource: .constant(sample), currentDocumentURL: URL(fileURLWithPath: "/Users/me/Documents/Folio/MyDoc.folio"))
-//        .modelContainer(container)
-//}
 
 
 

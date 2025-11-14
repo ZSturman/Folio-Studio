@@ -14,29 +14,30 @@ struct PermissionRequiredRow: View {
     var onGranted: (URL) -> Void
 
     var body: some View {
-        HStack(spacing: 10) {
+        VStack {
+            HStack {
             Image(systemName: "exclamationmark.triangle")
                 .foregroundStyle(.yellow)
-            VStack(alignment: .leading, spacing: 2) {
-                Text("\(title) requires permission")
-                    .font(.callout).bold()
-                    .lineLimit(1)
-                Text(url.path)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
-            Spacer()
-            Button("Grant Access") {
-                if let granted = PermissionHelper.requestAccess(for: url) {
-                    onGranted(granted)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("\(title) requires permission")
+                        .font(.callout).bold()
+                        .lineLimit(1)
+                    Text(url.path)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
                 }
+            }
+            HStack {
+                Button("Grant Access") {
+                    if let granted = PermissionHelper.requestAccess(for: url) {
+                        onGranted(granted)
+                    }
+                }
+     
             }
         }
         .padding(6)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(.yellow.opacity(0.6))
-        )
+
     }
 }

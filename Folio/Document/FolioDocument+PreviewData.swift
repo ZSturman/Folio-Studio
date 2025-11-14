@@ -107,3 +107,39 @@ struct FolioDocumentPreviewProvider {
     static let many = FolioDocument.many(50)
 }
 #endif
+
+//extension FolioDocument {
+//    static var collectionPreview: FolioDocument {
+//        var d = FolioDocument()
+////        d.assetsFolder = FileManager.default.temporaryDirectory
+////                  .appendingPathComponent("FolioAssetsPreview")
+//        d.collection = [
+//            "Photos": CollectionSection(
+//                images: [:],
+//                items: [
+//                    JSONCollectionItem(
+//                        id: UUID(),
+//                        type: CollectionItemType.file.rawValue,
+//                        label: "Sample Photo"
+//                    ),
+//                    JSONCollectionItem(
+//                        id: UUID(),
+//                        type: CollectionItemType.file.rawValue,
+//                        label: "Notes PDF"
+//                    )
+//                ]
+//            ),
+//            "Videos": CollectionSection(
+//                images: [:],
+//                items: [
+//                    JSONCollectionItem(
+//                        id: UUID(),
+//                        type: CollectionItemType.file.rawValue,
+//                        label: "Demo Clip"
+//                    )
+//                ]
+//            )
+//        ]
+//        return d
+//    }
+//}

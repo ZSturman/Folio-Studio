@@ -80,11 +80,11 @@ struct CropCanvas: View {
                     .contentShape(Rectangle())
                     .gesture(canvasGesture(container: container, cropRect: cropRect))
                 
-                #if os(macOS)
+           
                 ScrollWheelCaptureView(scale: $scaleRelCover, rotation: $rotation, translation: $translationNorm)
                     .frame(width: container.width, height: container.height)
                     .allowsHitTesting(true)
-                #endif
+        
             }
             .clipped()
             .position(x: container.width / 2, y: container.height / 2)

@@ -8,7 +8,6 @@
 import SwiftUI
 
 
-#if os(macOS)
 struct ScrollWheelCaptureView: NSViewRepresentable {
     @Binding var scale: CGFloat
     @Binding var rotation: CGFloat
@@ -89,5 +88,4 @@ struct ScrollWheelCaptureView: NSViewRepresentable {
         }
     }
 }
-#endif
 

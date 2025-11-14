@@ -1,52 +1,79 @@
+////
+////  ResourceCard.swift
+////  Folio
+////
+////  Created by Zachary Sturman on 11/6/25.
+////
 //
-//  ResourceCard.swift
-//  Folio
+//import Foundation
+//import SwiftUI
 //
-//  Created by Zachary Sturman on 11/6/25.
+//struct ResourceSecondarySidebar: View {
 //
-
-import Foundation
-import SwiftUI
-
-struct ResourceCard: View {
-    
-    @Binding var document: FolioDocument
-    
-    
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            if document.resources.isEmpty {
-                Text("No resources yet.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            } else {
-                ForEach(document.resources.indices, id: \.self) { i in
-                    HStack(alignment: .top) {
-                        ResourcePickerView(resource: $document.resources[i])
-                            .padding()
-                            .background(.thinMaterial)
-                            .clipShape(RoundedRectangle(cornerRadius: 8))
-                        Button(role: .destructive) {
-                            document.resources.remove(at: i)
-                        } label: {
-                            Image(systemName: "trash")
-                        }
-                        .buttonStyle(.borderless)
-                        .padding(.top, 8)
-                    }
-                }
-            }
-            Button("Add Resource") {
-                document.resources.append(JSONResource(
-                    label: "", category: "", type: "", url: ""
-                ))
-            }
-            .buttonStyle(.borderedProminent)
-            .padding(.top, 8)
-        }
-    }
-}
-
-#Preview {
-    ResourceCard(document: .constant( FolioDocument()))
-}
+//    @Binding var document: FolioDocument
+//    @Binding var selectedResourceIndex: Int?
+//
+//    var body: some View {
+//        VStack {
+//            List(selection: $selectedResourceIndex)
+//{
+//                    ForEach(document.resources.indices, id: \.self) { i in
+//                        Text(displayName(for: document.resources[i]))
+//                            .tag(i as Int?)
+//                    }
+//                    .onDelete(perform: delete)
+//                    .onMove(perform: move)
+//                }
+//                .overlay {
+//                    if document.resources.isEmpty {
+//                        Text("No resources yet")
+//                            .font(.caption)
+//                            .foregroundStyle(.secondary)
+//                    }
+//                }
+//            HStack(spacing: 8) {
+//                Button(action: {
+//                    addResource()
+//                }) {
+//                    Label("Add", systemImage: "plus")
+//                }
+//                .buttonStyle(.borderless)
+//            }
+//        }
+//        .onAppear {
+//            if !document.resources.isEmpty && selectedResourceIndex == nil {
+//                selectedResourceIndex = document.resources.indices.first
+//            }
+//        }
+//    }
+//
+//    private func displayName(for resource: JSONResource) -> String {
+//        if !resource.label.isEmpty { return resource.label }
+//        if !resource.url.isEmpty { return resource.url }
+//        return "New Resource"
+//    }
+//
+//    private func addResource() {
+//        let new = JSONResource(label: "", category: "", type: "", url: "")
+//        document.resources.append(new)
+//        selectedResourceIndex = document.resources.indices.last
+//    }
+//
+//    private func delete(at offsets: IndexSet) {
+//        for index in offsets {
+//            document.resources.remove(at: index)
+//        }
+//        if let selected = selectedResourceIndex,
+//           !document.resources.indices.contains(selected) {
+//            selectedResourceIndex = document.resources.indices.last
+//        }
+//    }
+//
+//    private func move(from source: IndexSet, to destination: Int) {
+//        document.resources.move(fromOffsets: source, toOffset: destination)
+//    }
+//}
+//
+//#Preview {
+//    ResourceSecondarySidebar(document: .constant(FolioDocument()), selectedResourceIndex: .constant(nil))
+//}

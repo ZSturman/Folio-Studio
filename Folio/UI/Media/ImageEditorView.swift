@@ -13,14 +13,17 @@ import AppKit
 struct ImageEditorView: View {
     let originalURL: URL
     let editedURL: URL
-    let targetAspect: CGSize?
+    let label: ImageLabel?
+    let initialTargetAspect: CGSize?
     let preferredMax: CGSize?
     let onSaved: () -> Void
 
     @State private var nsImage: NSImage?
+    @State private var targetAspect: CGSize?
 
     // Normalized transform
     @State private var scaleRelCover: CGFloat = 1.0
+    @State private var zoomText: String = "1.0x"
     @State private var rotation: CGFloat = 0.0 // degrees
     @State private var translationNorm: CGSize = .zero
     @State private var message: String = ""
@@ -68,20 +71,35 @@ struct ImageEditorView: View {
             }
         }
         .padding(12)
+        .padding(12)
         .onAppear { load() }
+        .onChange(of: scaleRelCover) { _, newValue in
+            zoomText = String(format: "%.2fx", newValue)
+        }
     }
 
     private var controls: some View {
         HStack(spacing: 12) {
             HStack(spacing: 8) {
-                Text("Scale")
-                Slider(value: $scaleRelCover, in: 0.1...8.0)
-                    .frame(width: 180)
-                Stepper("", value: $scaleRelCover, in: 0.1...8.0, step: 0.05)
-                    .labelsHidden()
-                Text(String(format: "%.2fx cover", scaleRelCover))
-                    .monospacedDigit()
-                    .frame(width: 90, alignment: .trailing)
+                Text("Zoom")
+
+                Button {
+                    adjustScale(by: 0.9)
+                } label: {
+                    Image(systemName: "minus.magnifyingglass")
+                }
+
+                TextField("1.0x", text: $zoomText, onCommit: {
+                    applyZoomText()
+                })
+                .frame(width: 70)
+                .multilineTextAlignment(.center)
+
+                Button {
+                    adjustScale(by: 1.1)
+                } label: {
+                    Image(systemName: "plus.magnifyingglass")
+                }
             }
 
             HStack(spacing: 8) {
@@ -94,27 +112,61 @@ struct ImageEditorView: View {
                     .monospacedDigit()
                     .frame(width: 50, alignment: .trailing)
             }
+            
+            let nudge: CGFloat = 0.05
 
-            HStack(spacing: 8) {
-                Text("X")
-                Slider(value: $translationNorm.width, in: -5...5)
-                    .frame(width: 180)
-                Stepper("", value: $translationNorm.width, in: -5...5, step: 0.01)
-                    .labelsHidden()
-                Text(String(format: "%0.2f W", translationNorm.width))
-                    .monospacedDigit()
-                    .frame(width: 70, alignment: .trailing)
+            VStack(spacing: 4) {
+                Text("Position")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+
+                HStack(spacing: 4) {
+                    Spacer(minLength: 0)
+                    Button {
+                        translationNorm.height -= nudge
+                    } label: {
+                        Image(systemName: "chevron.up")
+                    }
+                    Spacer(minLength: 0)
+                }
+
+                HStack(spacing: 4) {
+                    Button {
+                        translationNorm.width -= nudge
+                    } label: {
+                        Image(systemName: "chevron.left")
+                    }
+
+                    Spacer()
+                        .frame(width: 12)
+
+                    Button {
+                        translationNorm.width += nudge
+                    } label: {
+                        Image(systemName: "chevron.right")
+                    }
+                }
+
+                HStack(spacing: 4) {
+                    Spacer(minLength: 0)
+                    Button {
+                        translationNorm.height += nudge
+                    } label: {
+                        Image(systemName: "chevron.down")
+                    }
+                    Spacer(minLength: 0)
+                }
             }
 
-            HStack(spacing: 8) {
-                Text("Y")
-                Slider(value: $translationNorm.height, in: -5...5)
-                    .frame(width: 180)
-                Stepper("", value: $translationNorm.height, in: -5...5, step: 0.01)
-                    .labelsHidden()
-                Text(String(format: "%0.2f H", translationNorm.height))
-                    .monospacedDigit()
-                    .frame(width: 70, alignment: .trailing)
+            if label == .poster {
+                Button("Flip 90°") {
+                    if let aspect = targetAspect {
+                        targetAspect = CGSize(width: aspect.height, height: aspect.width)
+                        scaleRelCover = 1.0
+                        rotation = 0.0
+                        translationNorm = .zero
+                    }
+                }
             }
 
             Spacer()
@@ -122,14 +174,40 @@ struct ImageEditorView: View {
     }
 
     private func load() {
-        if let img = NSImage(contentsOf: originalURL) {
+        if let img = NSImage(contentsOf: editedURL) ?? NSImage(contentsOf: originalURL) {
             nsImage = img
         }
         if let sidecar = EditedSidecarIO.load(for: editedURL) {
-            // Interpret stored transform as normalized
             scaleRelCover = max(0.1, sidecar.transform.scale)
             rotation = sidecar.transform.rotationDegrees
             translationNorm = sidecar.transform.translation
+            targetAspect = sidecar.aspectOverride ?? initialTargetAspect
+        } else {
+            targetAspect = initialTargetAspect
+        }
+
+        zoomText = String(format: "%.2fx", scaleRelCover)
+    }
+    
+    private func clampedScale(_ value: CGFloat) -> CGFloat {
+        min(8.0, max(0.1, value))
+    }
+
+    private func adjustScale(by factor: CGFloat) {
+        scaleRelCover = clampedScale(scaleRelCover * factor)
+    }
+
+    private func applyZoomText() {
+        let cleaned = zoomText
+            .replacingOccurrences(of: "x", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if let val = Double(cleaned) {
+            scaleRelCover = clampedScale(CGFloat(val))
+            zoomText = String(format: "%.2fx", scaleRelCover)
+        } else {
+            // Invalid input: revert to current valid value
+            zoomText = String(format: "%.2fx", scaleRelCover)
         }
     }
 
@@ -176,7 +254,7 @@ struct ImageEditorView: View {
                 try FileManager.default.moveItem(at: tmp, to: outURL)
             }
 
-            EditedSidecarIO.save(EditedSidecar(transform: transform), for: outURL)
+            EditedSidecarIO.save(EditedSidecar(transform: transform, aspectOverride: effectiveAspect), for: outURL)
 
             message = "Saved"
             onSaved()

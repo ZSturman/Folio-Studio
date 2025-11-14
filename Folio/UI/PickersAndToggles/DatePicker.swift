@@ -30,8 +30,11 @@ struct DocumentCalendarPicker: View {
     }
 
     var body: some View {
-        // Standard macOS layout: a label at leading with the control at trailing
-        LabeledContent(title) {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
             HStack(spacing: 8) {
                 DatePicker(
                     "",
@@ -39,7 +42,6 @@ struct DocumentCalendarPicker: View {
                     displayedComponents: [.date]
                 )
                 .labelsHidden()
-                // Field style is the macOS-standard inline text field with a calendar popover
                 .datePickerStyle(.field)
                 .accessibilityLabel(Text(title))
                 .accessibilityValue(Text(accessibilityValue))

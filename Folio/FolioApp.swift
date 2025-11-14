@@ -13,23 +13,21 @@ import Combine
 @main
 struct FolioApp: App {
     @StateObject private var session = AppSession()
-
+    
     
     
     var body: some Scene {
-#if os(macOS)
         Window("Folio", id: "launcher") {
-    LauncherView()
+            LauncherView()
                 .modelContainer(for: FolioVersionedSchema.models)
-        .environmentObject(session)
-}
-#endif
+                .environmentObject(session)
+        }
         // 2) Real document windows only open after a file is chosen or created
         DocumentGroup(newDocument:  FolioDocument() ) { file in
             ContentView(document: file.$document, fileURL: file.fileURL)
                 .environmentObject(session)
                 .background(SeedBootstrapper())
-
+            
         }
         .modelContainer(for: FolioVersionedSchema.models)
         .commands {
@@ -41,9 +39,7 @@ struct FolioApp: App {
             }
         }
         
-        #if macOS
         Settings { SettingsView() }
-        #endif
     }
     
 }

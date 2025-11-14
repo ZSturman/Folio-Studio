@@ -16,9 +16,13 @@ enum ImageEditorCoordinator {
                            editedURL: URL,
                            label: ImageLabel,
                            onSaved: @escaping () -> Void) {
+        let sidecar = EditedSidecarIO.load(for: editedURL)
+        let initialAspect = sidecar?.aspectOverride ?? label.targetAspect(using: nil)
+
         let view = ImageEditorView(originalURL: originalURL,
                                    editedURL: editedURL,
-                                   targetAspect: label.targetAspect(using: nil),
+                                   label: label,
+                                   initialTargetAspect: initialAspect,
                                    preferredMax: label.preferredMaxPixels,
                                    onSaved: onSaved)
         let hosting = NSHostingController(rootView: view)
@@ -38,7 +42,8 @@ enum ImageEditorCoordinator {
         let target = chosen ?? (NSImage(contentsOf: originalURL)?.size ?? CGSize(width: 1, height: 1))
         let view = ImageEditorView(originalURL: originalURL,
                                    editedURL: editedURL,
-                                   targetAspect: target,
+                                   label: nil,
+                                   initialTargetAspect: target,
                                    preferredMax: nil,
                                    onSaved: onSaved)
         let hosting = NSHostingController(rootView: view)
@@ -55,7 +60,8 @@ enum ImageEditorCoordinator {
                                    onSaved: @escaping () -> Void) {
         let view = ImageEditorView(originalURL: originalURL,
                                    editedURL: editedURL,
-                                   targetAspect: nil,
+                                   label: nil,
+                                   initialTargetAspect: nil,
                                    preferredMax: nil,
                                    onSaved: onSaved)
         let hosting = NSHostingController(rootView: view)

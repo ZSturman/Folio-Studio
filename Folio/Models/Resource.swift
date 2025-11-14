@@ -109,8 +109,8 @@ func seedResourceCatalog(
     // key = category name, value = subtype names
     let catalog: [String: [String]] = [
         "repository": ["github", "gitlab", "bitbucket", "other"],
-        "localDownload": [],
-        "localLink": [],
+        "download": [],
+        "folio": [],
         "app": ["windows", "macAppStore", "iosAppStore", "googlePlay", "steam", "other"],
         "url": ["none", "blog", "youtube", "overleaf", "docs", "slides", "dataset", "website", "other"],
         "other": ["email", "contactForm", "drive", "dropbox", "oneDrive", "notion", "figma", "arxiv", "zenodo", "kaggle", "huggingface", "other"]
