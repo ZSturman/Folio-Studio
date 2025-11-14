@@ -1,4 +1,4 @@
-# Folio
+# Folio Studio
 
 A macOS document-based application for creating and managing portfolio project files. Folio provides a structured, single-source-of-truth format for documenting creative and professional work, making it easy to maintain and export portfolio content.
 
