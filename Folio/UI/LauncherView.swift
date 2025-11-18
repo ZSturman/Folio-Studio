@@ -32,12 +32,15 @@ struct LauncherView: View {
                     dismiss()
                   
                 }
+                .accessibilityIdentifier("Open...")
+                
                 Button("New…") {
                  
                     DocumentActions.createNewDocumentWithSavePanel()
                     dismiss()
                  
                 }
+                .accessibilityIdentifier("New...")
                 .keyboardShortcut(.defaultAction)
             }
             

@@ -22,7 +22,7 @@ struct ContentView: View {
 
     @State private var basicInfoSubtab: BasicInfoSubtab? = .main
     @State private var contentSubtab:   ContentSubtab?   = .summary
-
+    @State private var selectedLanguage: ProgrammingLanguage? = .swift
     @State private var selectedResourceIndex: Int?
     @State private var selectedCollectionItem: CollectionTabView.SelectedItem?
     @State private var selectedImageLabel: ImageLabel = .thumbnail
@@ -76,6 +76,9 @@ struct ContentView: View {
             if session.openDocumentCount == 0 {
                 openWindow(id: "launcher")
             }
+        }
+        .onChange(of: selectedLanguage) { _, new in
+            print("selectedLanguage changed to", new as Any)
         }
     }
 
@@ -134,6 +137,13 @@ struct ContentView: View {
                 selectedItem: $selectedCollectionItem
             )
 
+        case .snippets:
+            CodeSnippetsView(programmingLanguage: selectedLanguage ?? .swift)
+                .onAppear { print("Detail language:", selectedLanguage as Any) }
+                .onChange(of: selectedLanguage) { _, new in
+                    print("Detail sees language change:", new as Any)
+                }
+
         case .settings:
             SettingsView()
         }
@@ -171,6 +181,13 @@ struct ContentView: View {
             )
             .navigationTitle("Collection")
 
+        case .snippets:
+            List(ProgrammingLanguage.allCases, selection: $selectedLanguage) { language in
+                Text(language.displayName)
+                    .tag(language)
+            }
+            .navigationTitle("Snippets")
+
         case .settings, .none:
             Text("No secondary options")
                 .foregroundStyle(.secondary)
@@ -183,3 +200,4 @@ struct ContentView: View {
         .environmentObject(AppSession())
         .modelContainer(for: FolioVersionedSchema.models, inMemory: true)
 }
+

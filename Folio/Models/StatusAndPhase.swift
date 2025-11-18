@@ -65,6 +65,9 @@ final class ProjectStatusPhase {
         self.status = status
         self.addedVia = addedVia
         self.slug = try Self.uniqueSlug(for: name, in: context)
+        
+        // Manually update the inverse relationship
+        status.phases.append(self)
     }
 
     func rename(to newName: String, in context: ModelContext) throws {

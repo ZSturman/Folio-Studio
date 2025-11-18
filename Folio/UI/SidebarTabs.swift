@@ -8,6 +8,8 @@
 import Foundation
 import SwiftUI
 
+
+
 enum BasicInfoSubtab: String, CaseIterable, Identifiable, Hashable {
     case main
     case classification
@@ -47,7 +49,7 @@ enum SidebarTab: String, CaseIterable, Identifiable, Hashable {
     case content
     case collection
 
-    
+    case snippets
     case settings
 
     var id: String { rawValue }
@@ -58,6 +60,7 @@ enum SidebarTab: String, CaseIterable, Identifiable, Hashable {
         case .collection:             return "Collection"
         case .content:                return "Content"
         case .media:                  return "Media"
+        case .snippets:               return "Snippets"
         case .settings:               return "Settings"
         }
     }
@@ -67,7 +70,8 @@ enum SidebarTab: String, CaseIterable, Identifiable, Hashable {
         case .basicInfo:              return "info.circle"
         case .collection:             return "tray"
         case .content:                return "doc.text"
-            case .media:                  return "video"
+        case .media:                  return "video"
+        case .snippets:               return "chevron.left.slash.chevron.right"
         case .settings:               return "gear"
         }
     }
@@ -76,7 +80,9 @@ enum SidebarTab: String, CaseIterable, Identifiable, Hashable {
 struct SidebarTabsView: View {
     @Binding var selection: SidebarTab?
     
-    private var topTabs: [SidebarTab] { SidebarTab.allCases.filter { $0 != .settings } }
+    private var topTabs: [SidebarTab] {
+        SidebarTab.allCases.filter { $0 != .settings && $0 != .snippets }
+    }
 
     var body: some View {
         ZStack(alignment: .bottom) {
@@ -85,9 +91,12 @@ struct SidebarTabsView: View {
                     .tag(tab)
             }
 
-            settingsRow
-                .padding(.horizontal)
-                .padding(.bottom, 8)
+            VStack(spacing: 4) {
+                snippetsRow
+                settingsRow
+            }
+            .padding(.horizontal)
+            .padding(.bottom, 8)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -101,6 +110,18 @@ struct SidebarTabsView: View {
             .contentShape(Rectangle())
             .onTapGesture {
                 selection = .settings
+            }
+    }
+
+    private var snippetsRow: some View {
+        Label(SidebarTab.snippets.title, systemImage: SidebarTab.snippets.systemImage)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.vertical, 6)
+            .padding(.horizontal, 4)
+            .background(selection == .snippets ? Color.accentColor.opacity(0.2) : .clear)
+            .contentShape(Rectangle())
+            .onTapGesture {
+                selection = .snippets
             }
     }
 }
