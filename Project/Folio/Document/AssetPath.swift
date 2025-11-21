@@ -8,9 +8,18 @@ import Foundation
 import AppKit
 import CoreGraphics
 
-struct AssetsFolderLocation: Codable {
+struct AssetsFolderLocation: Codable, Equatable {
     var path: String?      // stored in JSON, portable
-    var bookmarkData: Data? // security-scoped bookmark, mac-only
+    
+    // Legacy migration support - not encoded in new documents
+    var bookmarkData: Data? {
+        get { nil }
+        set { /* Ignore - bookmarks now managed by BookmarkManager */ }
+    }
+    
+    init(path: String? = nil) {
+        self.path = path
+    }
 }
 
 
@@ -160,15 +169,33 @@ enum ImageLabel: Hashable, Codable, Sendable {
 }
 
 struct AssetPath: Codable, Hashable, Sendable {
-    var pathToOriginal: String
-    var pathToEdited: String
+    var id: UUID
+    var path: String  // Relative path from assetsFolder
     var customAspectRatio: CGSize?  // Only used for custom image labels
     
-    public init(pathToOriginal: String = "", pathToEdited: String = "", customAspectRatio: CGSize? = nil) {
-         self.pathToOriginal = pathToOriginal
-         self.pathToEdited = pathToEdited
-         self.customAspectRatio = customAspectRatio
-     }
+    // Legacy properties for migration support
+    var pathToOriginal: String? = nil
+    var pathToEdited: String? = nil
+    
+    public init(id: UUID = UUID(), path: String = "", customAspectRatio: CGSize? = nil) {
+        self.id = id
+        self.path = path
+        self.customAspectRatio = customAspectRatio
+    }
+    
+    // Legacy init for migration
+    public init(pathToOriginal: String, pathToEdited: String, customAspectRatio: CGSize? = nil) {
+        self.id = UUID()
+        self.path = pathToEdited
+        self.customAspectRatio = customAspectRatio
+        self.pathToOriginal = pathToOriginal
+        self.pathToEdited = pathToEdited
+    }
+    
+    // Custom encoding to exclude legacy properties
+    enum CodingKeys: String, CodingKey {
+        case id, path, customAspectRatio
+    }
 }
 
 // Convenience API

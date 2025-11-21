@@ -39,7 +39,7 @@ struct ImageImportService {
     
     // MARK: - Import Image
     
-    /// Imports an image for a given label: copies to SourceImages, renders with aspect ratio, saves to edited path
+    /// Imports an image for a given label: stores original in app data, renders to assets folder with relative path
     /// - Parameters:
     ///   - label: The image label (thumbnail, banner, custom, etc.)
     ///   - sourceURL: The source image file URL
@@ -53,38 +53,26 @@ struct ImageImportService {
         customAspect: CGSize? = nil
     ) -> ImportResult {
         guard let loc = document.wrappedValue.assetsFolder,
-              let editedRoot = loc.resolvedURL() else {
+              let assetsFolderURL = loc.resolvedURL() else {
             return ImportResult(assetPath: AssetPath(), error: "Select an assets folder first.")
         }
         
-        // Ensure SourceImages folder exists
-        let sourceImagesFolder = editedRoot.appendingPathComponent("SourceImages", isDirectory: true)
+        // Store original in app data and get UUID
+        let imageID: UUID
         do {
-            try FileManager.default.createDirectory(
-                at: sourceImagesFolder,
-                withIntermediateDirectories: true
-            )
+            imageID = try ImageAssetManager.shared.storeOriginalFromURL(sourceURL)
         } catch {
-            return ImportResult(assetPath: AssetPath(), error: "Failed to prepare SourceImages folder: \(error.localizedDescription)")
+            return ImportResult(assetPath: AssetPath(), error: "Failed to store original: \(error.localizedDescription)")
         }
         
-        // Copy original to SourceImages
-        let originalDest = uniqueURL(in: sourceImagesFolder, for: sourceURL.lastPathComponent)
-        do {
-            if originalDest.standardizedFileURL != sourceURL.standardizedFileURL {
-                try FileManager.default.copyItem(at: sourceURL, to: originalDest)
-            }
-        } catch {
-            return ImportResult(assetPath: AssetPath(), error: "Failed to copy original: \(error.localizedDescription)")
+        // Load the original image for rendering
+        guard let srcImage = ImageAssetManager.shared.loadOriginal(id: imageID) else {
+            return ImportResult(assetPath: AssetPath(), error: "Failed to load stored image")
         }
         
-        // Determine edited destination
-        let editedDest = uniqueURL(in: editedRoot, for: suggestedEditedFilename(label: label, from: sourceURL))
-        
-        // Load and render the image
-        guard let srcImage = NSImage(contentsOf: originalDest) else {
-            return ImportResult(assetPath: AssetPath(), error: "Failed to load image from: \(originalDest.path)")
-        }
+        // Determine edited destination in assets folder
+        let editedFilename = suggestedEditedFilename(label: label, from: sourceURL)
+        let editedDest = uniqueURL(in: assetsFolderURL, for: editedFilename)
         
         // Determine aspect ratio
         let computedAspect: CGSize
@@ -115,13 +103,20 @@ struct ImageImportService {
                 try rendered.writeJPEG(to: tmp, quality: 0.95)
                 try SafeFileWriter.atomicReplaceFile(at: editedDest, from: tmp)
             } else {
-                // Fallback: copy original as-is
-                try FileManager.default.copyItem(at: originalDest, to: editedDest)
+                // Fallback: save original as-is
+                if let tiffData = srcImage.tiffRepresentation,
+                   let bitmapRep = NSBitmapImageRep(data: tiffData),
+                   let jpegData = bitmapRep.representation(using: .jpeg, properties: [.compressionFactor: 0.95]) {
+                    try jpegData.write(to: editedDest)
+                }
             }
             
+            // Calculate relative path from assets folder
+            let relativePath = editedDest.relativePath(from: assetsFolderURL) ?? editedDest.lastPathComponent
+            
             let assetPath = AssetPath(
-                pathToOriginal: originalDest.path,
-                pathToEdited: editedDest.path,
+                id: imageID,
+                path: relativePath,
                 customAspectRatio: customAspect
             )
             return ImportResult(assetPath: assetPath, error: nil)
@@ -133,10 +128,10 @@ struct ImageImportService {
     
     // MARK: - Render and Save
     
-    /// Re-renders an existing image from original path with new aspect ratio and saves to edited path
+    /// Re-renders an existing image from app data with new aspect ratio and saves to edited path
     /// - Parameters:
     ///   - label: The image label
-    ///   - assetPath: Current asset path with original
+    ///   - assetPath: Current asset path with UUID
     ///   - document: The Folio document
     ///   - customAspect: Optional custom aspect ratio override
     /// - Returns: Updated AssetPath with error message if any
@@ -147,12 +142,12 @@ struct ImageImportService {
         customAspect: CGSize? = nil
     ) -> ImportResult {
         guard let loc = document.assetsFolder,
-              let editedRoot = loc.resolvedURL() else {
+              let assetsFolderURL = loc.resolvedURL() else {
             return ImportResult(assetPath: assetPath, error: "Assets folder not set")
         }
         
-        let originalURL = URL(fileURLWithPath: assetPath.pathToOriginal)
-        guard let srcImage = NSImage(contentsOf: originalURL) else {
+        // Load original from app data
+        guard let srcImage = ImageAssetManager.shared.loadOriginal(id: assetPath.id) else {
             return ImportResult(assetPath: assetPath, error: "Failed to load original image")
         }
         
@@ -166,7 +161,8 @@ struct ImageImportService {
             computedAspect = label.targetAspect(using: srcImage)
         }
         
-        let editedURL = URL(fileURLWithPath: assetPath.pathToEdited)
+        // Determine edited destination
+        let editedURL = assetsFolderURL.appendingPathComponent(assetPath.path)
         let maxPixels = label.preferredMaxPixels
         let opts = CoverRenderOptions(
             targetAspect: computedAspect,
@@ -182,9 +178,6 @@ struct ImageImportService {
                     .appendingPathExtension(editedURL.pathExtension)
                 try rendered.writeJPEG(to: tmp, quality: 0.95)
                 try SafeFileWriter.atomicReplaceFile(at: editedURL, from: tmp)
-                
-                // Clean up sidecar if exists
-                deleteSidecar(for: editedURL)
             }
             
             var updatedPath = assetPath
@@ -198,35 +191,39 @@ struct ImageImportService {
     
     // MARK: - Delete Image
     
-    /// Deletes the edited image file and its sidecar JSON
-    /// - Parameter assetPath: The asset path containing the edited path
+    /// Deletes the edited image file, original from app data, and transform data
+    /// - Parameters:
+    ///   - assetPath: The asset path containing the ID and path
+    ///   - assetsFolderURL: The assets folder URL to resolve relative path
     /// - Returns: Error message if deletion failed, nil otherwise
     @discardableResult
-    static func deleteImage(assetPath: AssetPath?) -> String? {
-        guard let editedPath = assetPath?.pathToEdited, !editedPath.isEmpty else {
-            return nil
-        }
+    static func deleteImage(assetPath: AssetPath?, assetsFolderURL: URL?) -> String? {
+        guard let assetPath = assetPath else { return nil }
         
-        let editedURL = URL(fileURLWithPath: editedPath)
+        // Delete original from app data
+        ImageAssetManager.shared.deleteOriginal(id: assetPath.id)
         
-        // Delete the edited image
-        if FileManager.default.fileExists(atPath: editedURL.path) {
-            do {
-                try FileManager.default.removeItem(at: editedURL)
-            } catch {
-                return "Failed to delete edited image: \(error.localizedDescription)"
+        // Delete transform data
+        ImageAssetManager.shared.deleteTransform(for: assetPath.id)
+        
+        // Delete edited image from assets folder
+        if !assetPath.path.isEmpty, let assetsFolderURL = assetsFolderURL {
+            let editedURL = assetsFolderURL.appendingPathComponent(assetPath.path)
+            if FileManager.default.fileExists(atPath: editedURL.path) {
+                do {
+                    try FileManager.default.removeItem(at: editedURL)
+                } catch {
+                    return "Failed to delete edited image: \(error.localizedDescription)"
+                }
             }
         }
-        
-        // Delete the sidecar JSON if it exists
-        deleteSidecar(for: editedURL)
         
         return nil
     }
     
     // MARK: - Revert to Original
     
-    /// Reverts image to original: re-renders from pathToOriginal, saves to pathToEdited, deletes sidecar
+    /// Reverts image to original: re-renders from app data, deletes transform data
     /// - Parameters:
     ///   - label: The image label
     ///   - assetPath: Current asset path
@@ -237,9 +234,8 @@ struct ImageImportService {
         assetPath: AssetPath,
         document: FolioDocument
     ) -> ImportResult {
-        // Delete sidecar first
-        let editedURL = URL(fileURLWithPath: assetPath.pathToEdited)
-        deleteSidecar(for: editedURL)
+        // Delete transform data
+        ImageAssetManager.shared.deleteTransform(for: assetPath.id)
         
         // Re-render from original with no custom aspect (use defaults)
         return renderAndSave(label: label, assetPath: assetPath, document: document, customAspect: nil)
@@ -259,29 +255,29 @@ struct ImageImportService {
         panel.canChooseFiles = true
         panel.allowedContentTypes = [.image]
         
-        // Set directory hint
-        if !assetPath.pathToEdited.isEmpty {
-            panel.directoryURL = URL(fileURLWithPath: assetPath.pathToEdited).deletingLastPathComponent()
-        } else if !assetPath.pathToOriginal.isEmpty {
-            panel.directoryURL = URL(fileURLWithPath: assetPath.pathToOriginal).deletingLastPathComponent()
-        } else if let loc = document.assetsFolder, let root = loc.resolvedURL() {
-            panel.directoryURL = root
+        // Set directory hint to assets folder
+        if let loc = document.assetsFolder, let assetsFolderURL = loc.resolvedURL() {
+            if !assetPath.path.isEmpty {
+                panel.directoryURL = assetsFolderURL.appendingPathComponent(assetPath.path).deletingLastPathComponent()
+            } else {
+                panel.directoryURL = assetsFolderURL
+            }
         }
         
         guard panel.runModal() == .OK, let selectedURL = panel.url else {
             return ImportResult(assetPath: assetPath, error: nil) // User cancelled
         }
         
-        guard let loc = document.assetsFolder, let root = loc.resolvedURL() else {
+        guard let loc = document.assetsFolder, let assetsFolderURL = loc.resolvedURL() else {
             return ImportResult(assetPath: assetPath, error: "Assets folder not set")
         }
         
         // Determine destination
         let destURL: URL
-        if selectedURL.standardizedFileURL.path.hasPrefix(root.standardizedFileURL.path) {
+        if selectedURL.standardizedFileURL.path.hasPrefix(assetsFolderURL.standardizedFileURL.path) {
             destURL = selectedURL
         } else {
-            destURL = uniqueURL(in: root, for: selectedURL.lastPathComponent)
+            destURL = uniqueURL(in: assetsFolderURL, for: selectedURL.lastPathComponent)
             do {
                 try FileManager.default.copyItem(at: selectedURL, to: destURL)
             } catch {
@@ -289,15 +285,18 @@ struct ImageImportService {
             }
         }
         
+        // Calculate relative path
+        let relativePath = destURL.relativePath(from: assetsFolderURL) ?? destURL.lastPathComponent
+        
         var updated = assetPath
-        updated.pathToEdited = destURL.path
+        updated.path = relativePath
         return ImportResult(assetPath: updated, error: nil)
     }
     
     // MARK: - Helper Functions
     
     private static func suggestedEditedFilename(label: ImageLabel, from source: URL) -> String {
-        let ext = source.pathExtension.isEmpty ? "png" : source.pathExtension.lowercased()
+        let ext = source.pathExtension.isEmpty ? "jpg" : source.pathExtension.lowercased()
         return "\(label.filenameBase).\(ext)"
     }
     
@@ -313,13 +312,5 @@ struct ImageImportService {
             index += 1
         }
         return candidate
-    }
-    
-    /// Deletes the .json sidecar file associated with an edited image
-    private static func deleteSidecar(for editedURL: URL) {
-        let sidecarURL = editedURL.deletingPathExtension().appendingPathExtension("json")
-        if FileManager.default.fileExists(atPath: sidecarURL.path) {
-            try? FileManager.default.removeItem(at: sidecarURL)
-        }
     }
 }

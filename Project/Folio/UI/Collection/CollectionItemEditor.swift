@@ -171,8 +171,8 @@ struct CollectionItemEditor: View {
                         .font(.subheadline)
                         .bold()
 
-                    if let url = previewURL(for: item.thumbnail.pathToOriginal, edited: item.thumbnail.pathToEdited) {
-                        let readableURL = PermissionHelper.resolvedURL(forOriginalPath: url.path)
+                    if let url = previewURL(for: item.thumbnail.pathToOriginal ?? "", edited: item.thumbnail.pathToEdited ?? "") {
+                        let readableURL = PermissionHelper.resolvedURL(forOriginalPath: url.path, from: document.documentWrapper)
                             ?? (PermissionHelper.isReadable(url) ? url : nil)
                         if let u = readableURL, let img = NSImage(contentsOf: u) {
                             VStack(spacing: 6) {
@@ -208,14 +208,16 @@ struct CollectionItemEditor: View {
                             let colFolder = CollectionFS.collectionsRoot(in: assets)
                                 .appendingPathComponent(CollectionFS.safeName(collectionName), isDirectory: true)
                             do {
-                                let oldFolder = colFolder.appendingPathComponent(CollectionFS.safeName(old), isDirectory: true)
+                                let oldLabel = old
+                                let newLabel = new
+                                let oldFolder = colFolder.appendingPathComponent(CollectionFS.safeName(oldLabel), isDirectory: true)
                                 let newFolder = try CollectionFS.renameItemFolder(collectionFolder: colFolder,
-                                                                                  oldLabel: old,
-                                                                                  newLabel: new)
+                                                                                  oldLabel: oldLabel,
+                                                                                  newLabel: newLabel)
                                 // Rebase edited file, if present
                                 if var fp = item.filePath {
                                     fp.pathToEdited = CollectionFS.rebaseEditedPath(
-                                        oldEditedPath: fp.pathToEdited,
+                                        oldEditedPath: fp.pathToEdited ?? "",
                                         oldParent: oldFolder,
                                         newParent: newFolder
                                     )
@@ -223,7 +225,7 @@ struct CollectionItemEditor: View {
                                 }
                                 // Rebase thumbnail
                                 item.thumbnail.pathToEdited = CollectionFS.rebaseEditedPath(
-                                    oldEditedPath: item.thumbnail.pathToEdited,
+                                    oldEditedPath: item.thumbnail.pathToEdited ?? "",
                                     oldParent: oldFolder,
                                     newParent: newFolder
                                 )
@@ -282,8 +284,8 @@ struct CollectionItemEditor: View {
                     case .file:
                         if let url = previewURL(for: item.filePath?.pathToOriginal ?? "", edited: item.filePath?.pathToEdited ?? "") {
                             // If unreadable, let the user grant permission rather than reverting to drop target.
-                            if PermissionHelper.isReadable(url) || PermissionHelper.resolvedURL(forOriginalPath: url.path) != nil {
-                                let effectiveURL = PermissionHelper.resolvedURL(forOriginalPath: url.path) ?? url
+                            if PermissionHelper.isReadable(url) || PermissionHelper.resolvedURL(forOriginalPath: url.path, from: document.documentWrapper) != nil {
+                                let effectiveURL = PermissionHelper.resolvedURL(forOriginalPath: url.path, from: document.documentWrapper) ?? url
                                 let preloaded = NSImage(contentsOf: effectiveURL)
                                 FilePreviewRow(url: effectiveURL, title: "File", preloadedImage: preloaded) {
                                     removeItemFile()
@@ -292,7 +294,7 @@ struct CollectionItemEditor: View {
                                 PermissionRequiredRow(title: "File", url: url) { granted in
                                     // Prefer to point to the exact granted URL for future reads
                                     if var fp = item.filePath {
-                                        if fp.pathToEdited.isEmpty {
+                                        if (fp.pathToEdited ?? "").isEmpty {
                                             fp.pathToOriginal = granted.path
                                         } else {
                                             fp.pathToEdited = granted.path
@@ -321,11 +323,11 @@ struct CollectionItemEditor: View {
                             .onTapGesture { pickFileForOriginal() }
                         }
                         
-                        if let fp = item.filePath, !fp.pathToOriginal.isEmpty {
-                            LabeledContent("Original") { Text(fp.pathToOriginal).font(.footnote).textSelection(.enabled) }
+                        if let fp = item.filePath, !(fp.pathToOriginal ?? "").isEmpty {
+                            LabeledContent("Original") { Text(fp.pathToOriginal ?? "").font(.footnote).textSelection(.enabled) }
                         }
-                        if let fp = item.filePath, !fp.pathToEdited.isEmpty {
-                            LabeledContent("Edited") { Text(fp.pathToEdited).font(.footnote).textSelection(.enabled) }
+                        if let fp = item.filePath, !(fp.pathToEdited ?? "").isEmpty {
+                            LabeledContent("Edited") { Text(fp.pathToEdited ?? "").font(.footnote).textSelection(.enabled) }
                         }
                         
                         HStack {
@@ -401,7 +403,7 @@ struct CollectionItemEditor: View {
             }
             .id(item.type.rawValue) // Force view refresh when type changes
                 
-            ResourcePickerView(resource: $item.resource, currentDocumentURL: nil)
+            ResourcePickerView(resource: $item.resource, document: $document)
                 .padding(.top, 6)
                 .id("\(item.resource.category)-\(item.resource.type)") // Force refresh when category/type changes
                 
@@ -447,9 +449,8 @@ struct CollectionItemEditor: View {
     }
 
     private func removeThumbnail() {
-        if !item.thumbnail.pathToEdited.isEmpty {
+        if let p = item.thumbnail.pathToEdited, !p.isEmpty {
             let fm = FileManager.default
-            let p = item.thumbnail.pathToEdited
             if fm.fileExists(atPath: p) { try? fm.removeItem(atPath: p) }
         }
         item.thumbnail.pathToOriginal = ""
@@ -487,11 +488,11 @@ struct CollectionItemEditor: View {
     private func copyOriginalIntoAssets() {
         guard let assets = ensureAssetsFolder() else { return }
         guard !item.label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        guard let fp = item.filePath, !fp.pathToOriginal.isEmpty else { return }
+        guard let fp = item.filePath, let originalPath = fp.pathToOriginal, !originalPath.isEmpty else { return }
         do {
             let colFolder = try CollectionFS.ensureCollectionFolder(assetsFolder: assets, name: collectionName)
             let itemFolder = try CollectionFS.ensureItemFolder(collectionFolder: colFolder, itemLabel: item.label)
-            let src = URL(fileURLWithPath: fp.pathToOriginal)
+            let src = URL(fileURLWithPath: originalPath)
             let copied = try CollectionFS.copyWithCollision(from: src, to: itemFolder)
 
             var newFP = fp
@@ -531,29 +532,21 @@ struct CollectionItemEditor: View {
 extension AssetsFolderLocation {
     init(url: URL) {
         self.path = url.path
-        self.bookmarkData = try? url.bookmarkData(
-            options: [.withSecurityScope],
-            includingResourceValuesForKeys: nil,
-            relativeTo: nil
-        )
+        // Bookmark data no longer stored here - managed by BookmarkManager
     }
 
-    /// Resolve to a usable URL, preferring the bookmark if available, falling back to the stored path.
-    func resolvedURL() -> URL? {
-        if let data = bookmarkData {
-            var isStale = false
-            if let url = try? URL(
-                resolvingBookmarkData: data,
-                options: [.withSecurityScope],
-                relativeTo: nil,
-                bookmarkDataIsStale: &isStale
-            ) {
-                return url
-            }
+    /// Resolve to a usable URL using BookmarkManager
+    /// - Parameter documentWrapper: The document's FileWrapper containing bookmarks
+    func resolvedURL(from documentWrapper: FileWrapper? = nil) -> URL? {
+        guard let path = path else { return nil }
+        
+        // Try BookmarkManager first if wrapper provided
+        if let wrapper = documentWrapper,
+           let resolved = BookmarkManager.shared.resolve(path: path, from: wrapper) {
+            return resolved
         }
-        if let path {
-            return URL(fileURLWithPath: path)
-        }
-        return nil
+        
+        // Fallback to direct path
+        return URL(fileURLWithPath: path)
     }
 }

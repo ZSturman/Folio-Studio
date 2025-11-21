@@ -15,7 +15,6 @@ struct MediaInspectorView: View {
     let onImageImported: (NSImage) -> Void
     let onRevertToOriginal: () -> Void
     let onClearImage: () -> Void
-    let onCopyOriginal: () -> Void
     
     @State private var isImporting = false
     @State private var customRotation: String = "0"
@@ -240,7 +239,7 @@ struct MediaInspectorView: View {
             document.images[selectedLabel] = currentPath
             
             // Re-render if image exists
-            if !currentPath.pathToOriginal.isEmpty {
+            if !(currentPath.pathToOriginal?.isEmpty ?? true) {
                 let result = ImageImportService.renderAndSave(
                     label: selectedLabel,
                     assetPath: currentPath,
@@ -498,36 +497,7 @@ struct MediaInspectorView: View {
             }
             .disabled(!viewModel.editingState.isImageLoaded)
             .controlSize(.regular)
-            
-            HStack(spacing: 4) {
-                Button(action: {
-                    onCopyOriginal()
-                }) {
-                    Label("Copy Original", systemImage: "doc.on.doc")
-                        .frame(maxWidth: .infinity)
-                }
-                .disabled(!canShowCopyOriginal)
-                .controlSize(.regular)
-                
-                Button(action: {
-                    showCopyOriginalInfo.toggle()
-                }) {
-                    Image(systemName: "info.circle")
-                }
-                .buttonStyle(.borderless)
-                .help("Copies the original image to the SourceImages folder in your assets directory")
-                .popover(isPresented: $showCopyOriginalInfo) {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Copy Original")
-                            .font(.headline)
-                        Text("This copies the original image to the SourceImages folder in your assets directory. This preserves the unedited version separately from the processed image.")
-                            .font(.caption)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    .padding()
-                    .frame(width: 250)
-                }
-            }
+        
             
             // Only show Delete Image Key for custom labels
             if isCustomLabel {
@@ -545,15 +515,15 @@ struct MediaInspectorView: View {
     
     private var canShowCopyOriginal: Bool {
         guard let current = document.images[selectedLabel],
-              !current.pathToOriginal.isEmpty,
-              !current.pathToEdited.isEmpty,
+              let originalPath = current.pathToOriginal, !originalPath.isEmpty,
+              let editedPath = current.pathToEdited, !editedPath.isEmpty,
               let loc = document.assetsFolder,
               let root = loc.resolvedURL()
         else {
             return false
         }
 
-        let originalURL = URL(fileURLWithPath: current.pathToOriginal)
+        let originalURL = URL(fileURLWithPath: originalPath)
         let sourceImagesFolder = root.appendingPathComponent("SourceImages", isDirectory: true)
         let destURL = uniqueURL(in: sourceImagesFolder, for: originalURL.lastPathComponent)
 

@@ -11,6 +11,7 @@ import SwiftUI
 struct CollectionSidebarNew: View {
     @Binding var document: FolioDocument
     @ObservedObject var viewModel: CollectionViewModel
+    @EnvironmentObject var inspectorState: InspectorState
 
     var body: some View {
         VStack(spacing: 8) {
@@ -20,9 +21,13 @@ struct CollectionSidebarNew: View {
                 get: { viewModel.selectedCollectionName },
                 set: { newName in
                     if let name = newName {
-                        viewModel.selectedCollectionName = name
-                        viewModel.selectedItemId = nil
-                        viewModel.showInspector = false
+                        // Use Task to defer state updates until after view update
+                        Task { @MainActor in
+                            viewModel.selectedCollectionName = name
+                            viewModel.selectedItemId = nil
+                            viewModel.showInspector = false
+                            inspectorState.collectionSelection = (name, nil)
+                        }
                     }
                 }
             )) {

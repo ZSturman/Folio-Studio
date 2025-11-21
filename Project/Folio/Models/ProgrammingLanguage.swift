@@ -22,6 +22,17 @@ enum ProgrammingLanguage: String, CaseIterable, Identifiable, Hashable {
     var displayName: String {
         rawValue.capitalized
     }
+    
+    var fileExtension: String {
+        switch self {
+        case .swift: return ".swift"
+        case .python: return ".py"
+        case .javascript: return ".js"
+        case .typescript: return ".ts"
+        case .ruby: return ".rb"
+        case .go: return ".go"
+        }
+    }
 }
 
 // MARK: - Snippet IDs

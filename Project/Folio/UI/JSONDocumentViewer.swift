@@ -45,7 +45,7 @@ struct JSONDocumentViewer: View {
                 }
             }
         }
-        .frame(minWidth: 600, minHeight: 400)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onAppear {
             generateJSON()
         }

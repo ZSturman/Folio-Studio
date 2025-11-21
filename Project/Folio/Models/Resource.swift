@@ -106,14 +106,14 @@ func seedResourceCatalog(
     addedVia: AddedViaOption = .system // or .manual if you prefer
 ) throws {
     // Source of truth. No enums.
-    // key = category name, value = subtype names
+    // key = category name, value = subtype names (human-readable)
     let catalog: [String: [String]] = [
-        "repository": ["github", "gitlab", "bitbucket", "other"],
+        "repository": ["GitHub", "GitLab", "Bitbucket", "Other"],
         "download": [],
         "folio": [],
-        "app": ["windows", "macAppStore", "iosAppStore", "googlePlay", "steam", "other"],
-        "url": ["none", "blog", "youtube", "overleaf", "docs", "slides", "dataset", "website", "other"],
-        "other": ["email", "contactForm", "drive", "dropbox", "oneDrive", "notion", "figma", "arxiv", "zenodo", "kaggle", "huggingface", "other"]
+        "app": ["Windows", "Mac App Store", "iOS App Store", "Google Play", "Steam", "Other"],
+        "url": ["None", "Blog", "YouTube", "Overleaf", "Docs", "Slides", "Dataset", "Website", "Other"],
+        "other": ["Email", "Contact Form", "Drive", "Dropbox", "OneDrive", "Notion", "Figma", "arXiv", "Zenodo", "Kaggle", "HuggingFace", "Other"]
     ]
     
     // Create/find categories, then create/find types under each

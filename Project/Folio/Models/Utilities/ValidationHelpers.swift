@@ -272,7 +272,7 @@ struct Validator {
         switch item.type {
         case .file:
             if let filePath = item.filePath {
-                results.append(validateFilePath(filePath.pathToOriginal))
+                results.append(validateFilePath(filePath.pathToOriginal ?? ""))
             } else {
                 results.append(.error(.invalidFilePath("File type item must have a file path")))
             }
@@ -296,8 +296,8 @@ struct Validator {
         }
         
         // Validate thumbnail paths
-        if !item.thumbnail.pathToOriginal.isEmpty {
-            results.append(validateFilePath(item.thumbnail.pathToOriginal, allowEmpty: true))
+        if !(item.thumbnail.pathToOriginal?.isEmpty ?? true) {
+            results.append(validateFilePath(item.thumbnail.pathToOriginal ?? "", allowEmpty: true))
         }
         
         return results.filter { !$0.isValid }

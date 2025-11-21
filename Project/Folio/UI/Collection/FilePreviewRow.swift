@@ -59,7 +59,7 @@ struct FilePreviewRow: View {
         // Prefer a already-readable URL if possible, otherwise try a stored security-scoped bookmark.
         let candidate: URL = {
             if PermissionHelper.isReadable(url) { return url }
-            if let resolved = PermissionHelper.resolvedURL(forOriginalPath: url.path) { return resolved }
+            if let resolved = PermissionHelper.resolvedURL(forOriginalPath: url.path, from: nil) { return resolved }
             return url
         }()
         // If the URL points to an image, load it directly for accurate preview.

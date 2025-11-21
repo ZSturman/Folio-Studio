@@ -19,6 +19,7 @@ struct ContentView: View {
     
     @Binding var document: FolioDocument
     @EnvironmentObject var session: AppSession
+    @EnvironmentObject var inspectorState: InspectorState
     @StateObject private var sdc = SwiftDataCoordinator()
     @StateObject private var mediaImageEditorViewModel = ImageEditorViewModel()
     
@@ -28,12 +29,13 @@ struct ContentView: View {
     @State private var basicInfoSubtab: BasicInfoSubtab? = .main
     @State private var contentSubtab:   ContentSubtab?   = .summary
     @State private var selectedLanguage: ProgrammingLanguage? = .swift
+    @State private var selectedSnippetID: CodeSnippetID? = nil
     @State private var selectedResourceIndex: Int?
     @StateObject private var collectionViewModel: CollectionViewModel
     @State private var selectedImageLabel: ImageLabel = .thumbnail
     @State private var jsonString: String = ""
     @State private var jsonError: String?
-    @State private var showInspector: Bool = true
+    @State private var showAssetFolderPrompt: Bool = false
     
     var fileURL: URL?
     
@@ -42,7 +44,7 @@ struct ContentView: View {
         self.fileURL = fileURL
         self._collectionViewModel = StateObject(wrappedValue: CollectionViewModel(
             document: document,
-            assetsFolder: document.wrappedValue.assetsFolder?.resolvedURL(),
+            assetsFolder: document.wrappedValue.resolvedAssetsFolderURL(),
             undoManager: nil
         ))
     }
@@ -63,20 +65,27 @@ struct ContentView: View {
                 // 3rd column: the actual editor / detail
                 Group {
                     if let selection {
-                        ScrollView {
-                            detailView(for: selection)
-                                .environmentObject(sdc)
+                        Group {
+                            if selection == .media {
+                                // Media tab needs full height for image canvas
+                                detailView(for: selection)
+                                    .environmentObject(sdc)
+                            } else {
+                                ScrollView {
+                                    detailView(for: selection)
+                                        .environmentObject(sdc)
+                                }
+                            }
                         }
                         .toolbar {
                             ToolbarItemGroup(placement: .automatic) {
-                                if selection == .media {
-                                    Button(action: {
-                                        showInspector.toggle()
-                                    }) {
-                                        Label("Inspector", systemImage: "sidebar.right")
-                                    }
-                                    .help("Toggle Inspector")
+                                Button(action: {
+                                    inspectorState.isVisible.toggle()
+                                    inspectorState.activeTab = selection
+                                }) {
+                                    Label("Inspector", systemImage: "sidebar.right")
                                 }
+                                .help("Toggle Inspector")
                             }
                         }
                     } else {
@@ -85,38 +94,78 @@ struct ContentView: View {
                     }
                 }
                 .padding()
+                
+                jsonPanel
+                    .frame(height: jsonPanelCollapsed ? 30 : max(100, min(800, jsonPanelHeight)))
             }
-            .inspector(isPresented: $showInspector) {
-                if selection == .media, let jsonImage = document.images[selectedImageLabel] {
-                    MediaInspectorView(
-                        viewModel: mediaImageEditorViewModel,
-                        selectedLabel: selectedImageLabel,
-                        document: $document,
-                        onImageImported: { image in
-                            handleImageImport(image)
-                        },
-                        onRevertToOriginal: {
-                            handleRevertToOriginal()
-                        },
-                        onClearImage: {
-                            handleClearImage()
-                        },
-                        onCopyOriginal: {
-                            handleCopyOriginal()
+            .inspector(isPresented: $inspectorState.isVisible) {
+                Group {
+                    switch selection {
+                    case .basicInfo:
+                        BasicInfoInspector(document: $document)
+                            .inspectorColumnWidth(min: 260, ideal: 300, max: 340)
+                    
+                    case .content:
+                        ContentInspector(document: $document)
+                            .inspectorColumnWidth(min: 260, ideal: 300, max: 340)
+                    
+                    case .media:
+                        if let _ = document.images[selectedImageLabel] {
+                            MediaInspectorView(
+                                viewModel: mediaImageEditorViewModel,
+                                selectedLabel: selectedImageLabel,
+                                document: $document,
+                                onImageImported: { image in
+                                    handleImageImport(image)
+                                },
+                                onRevertToOriginal: {
+                                    handleRevertToOriginal()
+                                },
+                                onClearImage: {
+                                    handleClearImage()
+                                }
+                            )
+                            .inspectorColumnWidth(min: 260, ideal: 300, max: 340)
+                        } else {
+                            Text("No image selected")
+                                .foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
                         }
-                    )
-                    .inspectorColumnWidth(min: 260, ideal: 300, max: 340)
+                    
+                    case .snippets:
+                        SnippetsInspector(selectedLanguage: $selectedLanguage)
+                            .inspectorColumnWidth(min: 260, ideal: 300, max: 340)
+                    
+                    case .collection:
+                        CollectionInspector(
+                            viewModel: collectionViewModel,
+                            document: $document,
+                            assetsFolder: document.assetsFolder?.resolvedURL()
+                        )
+                        .inspectorColumnWidth(min: 280, ideal: 320, max: 400)
+                    
+                    case .none:
+                        EmptyView()
+                    }
                 }
+                .environmentObject(sdc)
             }
             .frame(minHeight: 400)
-            
-            // Bottom: Resizable JSON panel
-            jsonPanel
-                .frame(height: jsonPanelCollapsed ? 30 : max(100, min(800, jsonPanelHeight)))
+        }
+        .onChange(of: document) { 
+            // Keep ViewModel in sync with latest document binding
+            collectionViewModel.updateBinding($document)
         }
         .onAppear {
             sdc.bind(using: modelContext)
             session.openDocumentCount += 1
+            
+            // Reset inspector selections for new document
+            inspectorState.reset()
+            
+            // Proactively validate assets folder
+            validateAssetsFolderOnOpen()
+            collectionViewModel.updateBinding($document)
         }
         .task(id: fileURL) {
             guard let url = fileURL else { return }
@@ -136,9 +185,44 @@ struct ContentView: View {
             if session.openDocumentCount == 0 && launcherAutoOpen {
                 openWindow(id: "launcher")
             }
+            
+            // Debounced cleanup of orphaned image assets
+            Task {
+                try? await Task.sleep(for: .seconds(5))
+                await cleanupOrphanedAssets()
+            }
         }
         .onChange(of: selectedLanguage) { _, new in
             print("selectedLanguage changed to", new as Any)
+        }
+        .sheet(isPresented: $showAssetFolderPrompt) {
+            VStack(spacing: 20) {
+                Image(systemName: "folder.badge.questionmark")
+                    .font(.system(size: 48))
+                    .foregroundStyle(.secondary)
+                
+                Text("Select Assets Folder")
+                    .font(.headline)
+                
+                Text("This document needs an assets folder to store images and files. Please select a folder where assets will be saved.")
+                    .multilineTextAlignment(.center)
+                    .foregroundStyle(.secondary)
+                
+                HStack {
+                    Button("Cancel") {
+                        showAssetFolderPrompt = false
+                    }
+                    .keyboardShortcut(.cancelAction)
+                    
+                    Button("Select Folder") {
+                        showAssetFolderPrompt = false
+                        _ = AssetFolderManager.shared.ensureAssetsFolder(for: $document)
+                    }
+                    .keyboardShortcut(.defaultAction)
+                }
+            }
+            .padding(30)
+            .frame(width: 400)
         }
         .onAppear {
             generateJSON()
@@ -238,6 +322,15 @@ struct ContentView: View {
     // MARK: - Image Import Handler
     
     private func handleImageImport(_ image: NSImage) {
+        // Store original in app data
+        let imageID: UUID
+        do {
+            imageID = try ImageAssetManager.shared.storeOriginal(image, fileExtension: "png")
+        } catch {
+            print("Failed to store original image: \(error)")
+            return
+        }
+        
         // Get or create assets folder
         guard let assetsFolder = document.assetsFolder ?? createAssetsFolderIfNeeded(),
               let assetsFolderURL = assetsFolder.resolvedURL() else {
@@ -245,69 +338,38 @@ struct ContentView: View {
             return
         }
         
-        // Create necessary subdirectories
-        let originalImagesFolder = assetsFolderURL.appendingPathComponent("OriginalImages", isDirectory: true)
-        let editedImagesFolder = assetsFolderURL.appendingPathComponent("EditedImages", isDirectory: true)
+        // Generate filename for edited version
+        let editedFilename = "\(selectedImageLabel.filenameBase).jpg"
+        let editedURL = assetsFolderURL.appendingPathComponent(editedFilename)
+        
+        // Render edited version with aspect ratio
+        let targetAspect = selectedImageLabel.targetAspect(using: image)
+        let options = CoverRenderOptions(
+            targetAspect: targetAspect,
+            targetMaxPixels: selectedImageLabel.preferredMaxPixels,
+            output: .jpeg(0.95),
+            enforceCover: true
+        )
         
         do {
-            try FileManager.default.createDirectory(at: originalImagesFolder, withIntermediateDirectories: true)
-            try FileManager.default.createDirectory(at: editedImagesFolder, withIntermediateDirectories: true)
-        } catch {
-            print("Failed to create directories: \(error)")
-            return
-        }
-        
-        // Generate filename based on label
-        let timestamp = Int(Date().timeIntervalSince1970)
-        let baseFilename = "\(selectedImageLabel.filenameBase)_\(timestamp)"
-        let originalURL = originalImagesFolder.appendingPathComponent("\(baseFilename).png")
-        let editedURL = editedImagesFolder.appendingPathComponent("\(baseFilename).png")
-        
-        // Save original image
-        guard let tiffData = image.tiffRepresentation,
-              let bitmapRep = NSBitmapImageRep(data: tiffData),
-              let pngData = bitmapRep.representation(using: .png, properties: [:]) else {
-            print("Failed to convert image to PNG")
-            return
-        }
-        
-        do {
-            try pngData.write(to: originalURL)
-            
-            // Process and save edited version
-            let targetAspect = selectedImageLabel.targetAspect(using: image)
-            let options = CoverRenderOptions(
-                targetAspect: targetAspect,
-                targetMaxPixels: selectedImageLabel.preferredMaxPixels,
-                output: .png,
-                enforceCover: true
-            )
-            
             if let renderedImage = CoverRender.renderCover(
                 nsImage: image,
                 options: options,
                 userTransform: nil
-            ),
-               let renderedTiff = renderedImage.tiffRepresentation,
-               let renderedBitmap = NSBitmapImageRep(data: renderedTiff),
-               let renderedPNG = renderedBitmap.representation(using: .png, properties: [:]) {
-                try renderedPNG.write(to: editedURL)
+            ) {
+                try renderedImage.writeJPEG(to: editedURL, quality: 0.95)
                 
-                // Update document with new paths
+                // Calculate relative path
+                let relativePath = editedURL.relativePath(from: assetsFolderURL) ?? editedURL.lastPathComponent
+                
+                // Update document with new asset path
                 document.images[selectedImageLabel] = AssetPath(
-                    pathToOriginal: originalURL.path,
-                    pathToEdited: editedURL.path
+                    id: imageID,
+                    path: relativePath
                 )
-                
-                // Create sidecar with default transform
-                let sidecar = EditedSidecar(
-                    transform: UserTransform(),
-                    aspectOverride: targetAspect
-                )
-                EditedSidecarIO.save(sidecar, for: editedURL)
             }
         } catch {
-            print("Failed to save image: \(error)")
+            print("Failed to save edited image: \(error)")
         }
     }
     
@@ -328,45 +390,15 @@ struct ContentView: View {
     }
     
     private func handleClearImage() {
-        guard var current = document.images[selectedImageLabel] else { return }
+        guard let assetPath = document.images[selectedImageLabel],
+              let assetsFolderURL = document.assetsFolder?.resolvedURL() else { return }
         
-        if !current.pathToEdited.isEmpty {
-            let editedURL = URL(fileURLWithPath: current.pathToEdited)
-            if FileManager.default.fileExists(atPath: editedURL.path) {
-                try? FileManager.default.removeItem(at: editedURL)
-            }
-        }
+        // Delete using ImageImportService
+        ImageImportService.deleteImage(assetPath: assetPath, assetsFolderURL: assetsFolderURL)
         
-        current.pathToOriginal = ""
-        current.pathToEdited = ""
-        document.images[selectedImageLabel] = current
+        // Remove from document
+        document.images.removeValue(forKey: selectedImageLabel.storageKey)
         mediaImageEditorViewModel.removeImage()
-    }
-    
-    private func handleCopyOriginal() {
-        guard var current = document.images[selectedImageLabel],
-              let loc = document.assetsFolder,
-              let root = loc.resolvedURL()
-        else { return }
-        
-        let originalURL = URL(fileURLWithPath: current.pathToOriginal)
-        let sourceImagesFolder = root.appendingPathComponent("SourceImages", isDirectory: true)
-        
-        do {
-            try FileManager.default.createDirectory(
-                at: sourceImagesFolder,
-                withIntermediateDirectories: true
-            )
-            
-            let destURL = uniqueURL(in: sourceImagesFolder, for: originalURL.lastPathComponent)
-            if originalURL.standardizedFileURL != destURL.standardizedFileURL {
-                try FileManager.default.copyItem(at: originalURL, to: destURL)
-            }
-            current.pathToOriginal = destURL.path
-            document.images[selectedImageLabel] = current
-        } catch {
-            print("Failed to copy original: \(error)")
-        }
     }
     
     private func uniqueURL(in folder: URL, for filename: String) -> URL {
@@ -400,16 +432,22 @@ struct ContentView: View {
             defer { assetsFolderURL.stopAccessingSecurityScopedResource() }
             
             let bookmarkData = try assetsFolderURL.bookmarkData(
-                options: .withSecurityScope,
+                options: [.withSecurityScope],
                 includingResourceValuesForKeys: nil,
                 relativeTo: nil
             )
             
             let location = AssetsFolderLocation(
-                path: assetsFolderURL.path,
-                bookmarkData: bookmarkData
+                path: assetsFolderURL.path
             )
             document.assetsFolder = location
+            
+            // Store bookmark using BookmarkManager
+            try? BookmarkManager.shared.store(
+                bookmark: bookmarkData,
+                forPath: assetsFolderURL.path,
+                in: document.documentWrapper
+            )
             return location
         } catch {
             print("Failed to create assets folder: \(error)")
@@ -421,18 +459,8 @@ struct ContentView: View {
     private func detailView(for tab: SidebarTab) -> some View {
         switch tab {
         case .basicInfo:
-            switch basicInfoSubtab ?? .main {
-            case .main:
-                // your existing main basic info view
-                BasicInfoTabView(document: $document)
-
-            case .classification:
-                // a different view or mode for classification
-                BasicInfoClassificationView(document: $document)
-
-            case .details:
-                BasicInfoDetailsView(document: $document)
-            }
+            // Show main BasicInfo view - classification/details are in inspector
+            BasicInfoTabView(document: $document)
 
         case .content:
             switch contentSubtab ?? .summary {
@@ -475,7 +503,10 @@ struct ContentView: View {
                 .environmentObject(collectionViewModel)
 
         case .snippets:
-            CodeSnippetsView(programmingLanguage: selectedLanguage ?? .swift)
+            CodeSnippetsView(
+                programmingLanguage: selectedLanguage ?? .swift,
+                selectedSnippetID: $selectedSnippetID
+            )
                 .onAppear { print("Detail language:", selectedLanguage as Any) }
                 .onChange(of: selectedLanguage) { _, new in
                     print("Detail sees language change:", new as Any)
@@ -487,11 +518,12 @@ struct ContentView: View {
     private var secondarySidebar: some View {
         switch selection {
         case .basicInfo:
-            List(BasicInfoSubtab.allCases, selection: $basicInfoSubtab) { sub in
-                Text(sub.title)
-                    .tag(sub)
-            }
-            .navigationTitle("Basic Info")
+            // No secondary sidebar for BasicInfo - classification/details moved to inspector
+            Text("Use inspector for classification and details")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .padding()
 
         case .content:
             List(ContentSubtab.allCases, selection: $contentSubtab) { sub in
@@ -516,10 +548,10 @@ struct ContentView: View {
             .navigationTitle("Collection")
 
         case .snippets:
-            List(ProgrammingLanguage.allCases, selection: $selectedLanguage) { language in
-                Text(language.displayName)
-                    .tag(language)
-            }
+            SnippetSecondarySidebar(
+                selectedLanguage: $selectedLanguage,
+                selectedSnippetID: $selectedSnippetID
+            )
             .navigationTitle("Snippets")
 
         case .none:
@@ -527,11 +559,142 @@ struct ContentView: View {
                 .foregroundStyle(.secondary)
         }
     }
+    
+    // MARK: - Validation
+    
+    private func validateAssetsFolderOnOpen() {
+        // Check if assets folder exists and is accessible
+        guard let assetsFolder = document.assetsFolder,
+              let path = assetsFolder.path else {
+            // No assets folder set - this is OK for new documents
+            return
+        }
+        
+        // Try to resolve the URL with bookmark first
+        var resolvedURL: URL?
+        if let bookmarkResolved = BookmarkManager.shared.resolve(path: path, from: document.documentWrapper) {
+            resolvedURL = bookmarkResolved
+        } else if FileManager.default.fileExists(atPath: path) {
+            // Bookmark failed but path exists - try direct access
+            resolvedURL = URL(fileURLWithPath: path)
+        }
+        
+        guard let url = resolvedURL else {
+            // Folder doesn't exist or can't be accessed
+            print("[ContentView] Assets folder not found: \(path)")
+            showAssetsFolderPermissionDialog(for: path)
+            return
+        }
+        
+        // Verify write permissions by attempting to create a test file
+        let testFileURL = url.appendingPathComponent(".folio_permission_test_\(UUID().uuidString)")
+        let testData = Data("test".utf8)
+        
+        do {
+            try testData.write(to: testFileURL)
+            try FileManager.default.removeItem(at: testFileURL)
+            // Success - we have write access
+        } catch {
+            // Write permission denied
+            print("[ContentView] No write access to assets folder: \(error.localizedDescription)")
+            showAssetsFolderPermissionDialog(for: path)
+        }
+    }
+    
+    private func showAssetsFolderPermissionDialog(for path: String) {
+        DispatchQueue.main.async {
+            _ = AssetFolderManager.shared.requestPermissionForExistingFolder(
+                path: path,
+                in: self.$document
+            )
+        }
+    }
+    
+    private func cleanupOrphanedAssets() async {
+        // Collect all active image IDs from current document
+        var activeIDs = Set<UUID>()
+        for (_, assetPath) in document.images {
+            activeIDs.insert(assetPath.id)
+        }
+        
+        // Add IDs from collection items
+        for (_, section) in document.collection {
+            for item in section.items {
+                activeIDs.insert(item.thumbnail.id)
+                if let filePath = item.filePath {
+                    activeIDs.insert(filePath.id)
+                }
+            }
+        }
+        
+        // Cleanup orphaned assets (excluding active IDs)
+        await ImageAssetManager.shared.cleanupOrphans(excluding: activeIDs)
+    }
 }
 
-#Preview {
-    ContentView(document: .constant(FolioDocument()), fileURL: nil)
-        .environmentObject(AppSession())
-        .modelContainer(for: FolioVersionedSchema.models, inMemory: true)
+
+// MARK: - Snippet Secondary Sidebar
+
+struct SnippetSecondarySidebar: View {
+    @Binding var selectedLanguage: ProgrammingLanguage?
+    @Binding var selectedSnippetID: CodeSnippetID?
+    
+    var body: some View {
+        VStack(spacing: 0) {
+            // Language picker
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Language")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                
+                Picker("Language", selection: $selectedLanguage) {
+                    ForEach(ProgrammingLanguage.allCases) { language in
+                        Text(language.displayName).tag(language as ProgrammingLanguage?)
+                    }
+                }
+                .pickerStyle(.menu)
+                .labelsHidden()
+            }
+            .padding()
+            
+            Divider()
+            
+            // Functions list
+            List(selection: $selectedSnippetID) {
+                Section("Functions") {
+                    ForEach(CodeSnippetID.allCases) { snippetID in
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(snippetTitle(for: snippetID))
+                                .font(.body)
+                            Text(snippetSummary(for: snippetID))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(2)
+                        }
+                        .tag(snippetID)
+                    }
+                }
+            }
+            .listStyle(.sidebar)
+        }
+    }
+    
+    private func snippetTitle(for id: CodeSnippetID) -> String {
+        switch id {
+        case .loadSummary:
+            return "Load & View Structure"
+        case .exportMetadata:
+            return "Extract Metadata"
+        }
+    }
+    
+    private func snippetSummary(for id: CodeSnippetID) -> String {
+        switch id {
+        case .loadSummary:
+            return "Display JSON structure with formatting"
+        case .exportMetadata:
+            return "Parse and extract specific fields"
+        }
+    }
 }
 

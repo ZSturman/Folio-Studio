@@ -28,9 +28,16 @@ struct CollectionInspector: View {
     @State private var isDropTargetedFile = false
     @State private var isDropTargetedThumb = false
     @State private var showPrivateProjects = false
-    @State private var localSummary: String = ""
-    @State private var localLabel: String = ""
-    @State private var localUrl: String = ""
+    @State private var editingLabel: String = ""
+    @State private var editingSummary: String = ""
+    @State private var editingUrl: String = ""
+    @State private var thumbnailRefreshKey: UUID = UUID()
+    @FocusState private var labelFieldFocused: Bool
+    @FocusState private var summaryFieldFocused: Bool
+    
+    // Debounce timers for performance
+    @State private var labelDebounceTimer: Timer?
+    @State private var summaryDebounceTimer: Timer?
     
     var body: some View {
         ScrollView {
@@ -58,11 +65,24 @@ struct CollectionInspector: View {
                 }
                 .padding()
                 .frame(minWidth: 280, idealWidth: 320, maxWidth: 400)
+                .id(item.id)
                 .onAppear {
-                    // Initialize local state from item
-                    localSummary = item.summary ?? ""
-                    localLabel = item.label
-                    localUrl = item.url ?? ""
+                    syncLocalState(from: item)
+                }
+                .onChange(of: item.id) { oldId, newId in
+                    // Commit any pending changes before switching items
+                    if oldId != newId {
+                        print("[CollectionInspector] 🔄 Item changed from \(oldId) to \(newId), committing pending changes")
+                        commitPendingChanges()
+                    }
+                    if let currentItem = viewModel.selectedItem {
+                        syncLocalState(from: currentItem)
+                    }
+                }
+                .onDisappear {
+                    // Commit any pending changes when inspector closes
+                    print("[CollectionInspector] 👋 Inspector disappearing, committing pending changes")
+                    commitPendingChanges()
                 }
             } else {
                 VStack(spacing: 12) {
@@ -107,57 +127,21 @@ struct CollectionInspector: View {
                 .font(.subheadline)
                 .bold()
             
-            if let url = previewURL(for: item.thumbnail.pathToOriginal, edited: item.thumbnail.pathToEdited) {
-                let readableURL = PermissionHelper.resolvedURL(forOriginalPath: url.path)
-                    ?? (PermissionHelper.isReadable(url) ? url : nil)
-                if let u = readableURL, let img = NSImage(contentsOf: u) {
-                    thumbnailPreview(image: img, url: u)
-                } else {
-                    PermissionRequiredRow(title: "Thumbnail", url: url) { granted in
-                        copyThumbnailIntoAssets(from: granted)
-                    }
-                }
-            } else {
-                DropTargetView(
-                    isTargeted: $isDropTargetedThumb,
-                    title: "Drop image or click to browse",
-                    acceptImagesOnly: true
-                ) { url in
-                    copyThumbnailIntoAssets(from: url)
-                }
-                .onTapGesture { pickImageForThumbnail() }
-            }
+            ThumbnailContentView(
+                item: item,
+                document: document,
+                isDropTargeted: $isDropTargetedThumb,
+                onCopyThumbnail: copyThumbnailIntoAssets,
+                onPickImage: pickImageForThumbnail,
+                onRemoveThumbnail: removeThumbnail
+            )
+            .id(thumbnailRefreshKey)
         }
-    }
-    
-    private func thumbnailPreview(image: NSImage, url: URL) -> some View {
-        VStack(spacing: 8) {
-            Image(nsImage: image)
-                .resizable()
-                .aspectRatio(contentMode: .fit)
-                .frame(maxHeight: 160)
-                .cornerRadius(8)
-                .overlay(RoundedRectangle(cornerRadius: 8).stroke(.secondary.opacity(0.2)))
-            
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(url.lastPathComponent)
-                        .font(.caption)
-                        .lineLimit(1)
-                    Text(url.path)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-                Spacer()
-                Button(role: .destructive) {
-                    removeThumbnail()
-                } label: {
-                    Image(systemName: "trash")
-                        .font(.caption)
-                }
-                .buttonStyle(.borderless)
-            }
+        .onAppear {
+            print("[CollectionInspector] 🖼️ Thumbnail section appeared for item: \(item.id)")
+            print("  - Thumbnail path: \(item.thumbnail.path)")
+            print("  - Thumbnail original: \(item.thumbnail.pathToOriginal ?? "nil")")
+            print("  - Thumbnail edited: \(item.thumbnail.pathToEdited ?? "nil")")
         }
     }
     
@@ -167,15 +151,27 @@ struct CollectionInspector: View {
                 .font(.subheadline)
                 .bold()
             
-            TextField("Item label", text: $localLabel)
+            TextField("Item label", text: $editingLabel)
                 .textFieldStyle(.roundedBorder)
+                .focused($labelFieldFocused)
                 .onSubmit {
-                    if localLabel != item.label {
-                        viewModel.updateItemLabel(to: localLabel)
+                    // Cancel debounce and commit immediately on submit
+                    labelDebounceTimer?.invalidate()
+                    commitLabel()
+                }
+                .onChange(of: editingLabel) { _, _ in
+                    // Debounce label changes
+                    labelDebounceTimer?.invalidate()
+                    labelDebounceTimer = Timer.scheduledTimer(withTimeInterval: 0.8, repeats: false) { _ in
+                        commitLabel()
                     }
                 }
-                .onChange(of: item.label) { _, newValue in
-                    localLabel = newValue
+                .onChange(of: labelFieldFocused) { _, isFocused in
+                    if !isFocused {
+                        // Cancel debounce and commit immediately when losing focus
+                        labelDebounceTimer?.invalidate()
+                        commitLabel()
+                    }
                 }
         }
     }
@@ -187,23 +183,30 @@ struct CollectionInspector: View {
                 .bold()
             
             ZStack(alignment: .topLeading) {
-                if localSummary.isEmpty {
+                if editingSummary.isEmpty {
                     Text("Write a short overview...")
                         .foregroundStyle(.secondary)
                         .padding(EdgeInsets(top: 8, leading: 10, bottom: 0, trailing: 0))
                 }
                 
-                TextEditor(text: $localSummary)
+                TextEditor(text: $editingSummary)
                     .frame(minHeight: 80)
                     .padding(8)
                     .scrollContentBackground(.hidden)
-                    .onChange(of: localSummary) { _, newValue in
-                        viewModel.updateItem { item in
-                            item.summary = newValue.isEmpty ? nil : newValue
+                    .focused($summaryFieldFocused)
+                    .onChange(of: editingSummary) { _, _ in
+                        // Debounce summary changes
+                        summaryDebounceTimer?.invalidate()
+                        summaryDebounceTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: false) { _ in
+                            commitSummary()
                         }
                     }
-                    .onChange(of: item.summary) { _, newValue in
-                        localSummary = newValue ?? ""
+                    .onChange(of: summaryFieldFocused) { _, isFocused in
+                        if !isFocused {
+                            // Cancel debounce and commit immediately when losing focus
+                            summaryDebounceTimer?.invalidate()
+                            commitSummary()
+                        }
                     }
             }
             .background(
@@ -221,18 +224,36 @@ struct CollectionInspector: View {
                     .bold()
                 Spacer()
                 Picker("Source", selection: Binding(
-                    get: { item.type },
-                    set: { newType in
-                        viewModel.updateItem { item in
-                            item.type = newType
-                            switch newType {
-                            case .file:
-                                item.url = nil
-                            case .urlLink:
-                                item.filePath = nil
-                            case .folio:
-                                item.filePath = nil
-                                item.url = nil
+                    get: {
+                        // Always read from the current item
+                        viewModel.selectedItem?.type ?? item.type
+                    },
+                    set: { newValue in
+                        print("[CollectionInspector] 🔄 Source type picker changed to: \(newValue)")
+                        guard let currentItem = viewModel.selectedItem else {
+                            print("  ❌ No selected item")
+                            return
+                        }
+                        
+                        if newValue != currentItem.type {
+                            print("  ✅ Updating item type from \(currentItem.type) to \(newValue)")
+                            // Commit outside of view update to avoid conflicts
+                            Task { @MainActor in
+                                viewModel.updateItem { item in
+                                    item.type = newValue
+                                    switch newValue {
+                                    case .file:
+                                        item.url = nil
+                                    case .urlLink:
+                                        item.filePath = nil
+                                    case .folio:
+                                        item.filePath = nil
+                                        // Initialize with first project if available
+                                        if item.url == nil, let firstProject = self.filteredProjects.first {
+                                            item.url = self.projectIdString(firstProject)
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -243,6 +264,7 @@ struct CollectionInspector: View {
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
+                .id("source-\(item.id)-\(item.type.rawValue)") // Force refresh when item or type changes
             }
             
             Group {
@@ -260,58 +282,27 @@ struct CollectionInspector: View {
     
     private func fileTypeContent(item: JSONCollectionItem) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            if let url = previewURL(for: item.filePath?.pathToOriginal ?? "", edited: item.filePath?.pathToEdited ?? "") {
-                if PermissionHelper.isReadable(url) || PermissionHelper.resolvedURL(forOriginalPath: url.path) != nil {
-                    let effectiveURL = PermissionHelper.resolvedURL(forOriginalPath: url.path) ?? url
-                    let preloaded = NSImage(contentsOf: effectiveURL)
-                    FilePreviewRow(url: effectiveURL, title: "File", preloadedImage: preloaded) {
-                        removeItemFile()
-                    }
-                } else {
-                    PermissionRequiredRow(title: "File", url: url) { granted in
-                        viewModel.updateItem { item in
-                            if item.filePath == nil {
-                                item.filePath = AssetPath(pathToOriginal: granted.path)
-                            } else {
-                                if item.filePath?.pathToEdited.isEmpty ?? true {
-                                    item.filePath?.pathToOriginal = granted.path
-                                } else {
-                                    item.filePath?.pathToEdited = granted.path
-                                }
-                            }
-                            item.type = .file
-                            item.url = nil
-                        }
-                    }
-                }
-            } else {
-                DropTargetView(
-                    isTargeted: $isDropTargetedFile,
-                    title: "Drag file or click to browse"
-                ) { url in
-                    viewModel.updateItem { item in
-                        var fp = item.filePath ?? AssetPath()
-                        fp.pathToOriginal = url.path
-                        item.filePath = fp
-                        item.type = .file
-                        item.url = nil
-                    }
-                }
-                .onTapGesture { pickFileForOriginal() }
-            }
+            FileSourceContentView(
+                item: item,
+                document: document,
+                isDropTargeted: $isDropTargetedFile,
+                viewModel: viewModel,
+                onPickFile: pickFileForOriginal,
+                onRemoveFile: removeItemFile
+            )
             
-            if let fp = item.filePath, !fp.pathToOriginal.isEmpty {
+            if let fp = item.filePath, !(fp.pathToOriginal?.isEmpty ?? true) {
                 LabeledContent("Original") {
-                    Text(fp.pathToOriginal)
+                    Text(fp.pathToOriginal ?? "")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
                         .textSelection(.enabled)
                 }
             }
-            if let fp = item.filePath, !fp.pathToEdited.isEmpty {
+            if let fp = item.filePath, !(fp.pathToEdited?.isEmpty ?? true) {
                 LabeledContent("Edited") {
-                    Text(fp.pathToEdited)
+                    Text(fp.pathToEdited ?? "")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
@@ -331,20 +322,22 @@ struct CollectionInspector: View {
     
     private func urlTypeContent(item: JSONCollectionItem) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            TextField("https://example.com", text: $localUrl)
+            TextField("https://example.com", text: Binding(
+                get: {
+                    // Always get latest from viewModel
+                    viewModel.selectedItem?.url ?? item.url ?? ""
+                },
+                set: { newValue in
+                    editingUrl = newValue
+                }
+            ))
                 .textFieldStyle(.roundedBorder)
                 .onSubmit {
-                    let trimmed = localUrl.trimmingCharacters(in: .whitespacesAndNewlines)
-                    viewModel.updateItem { item in
-                        item.url = trimmed.isEmpty ? nil : trimmed
-                        if !trimmed.isEmpty {
-                            item.type = .urlLink
-                            item.filePath = nil
-                        }
-                    }
+                    commitUrl()
                 }
-                .onChange(of: item.url) { _, newValue in
-                    localUrl = newValue ?? ""
+                .onChange(of: editingUrl) { _, _ in
+                    // Could add debounce here if needed, but URL is typically pasted/typed once
+                    // For now, commit on submit or focus loss only
                 }
             
             if let urlString = item.url, !urlString.isEmpty {
@@ -361,20 +354,25 @@ struct CollectionInspector: View {
         VStack(alignment: .leading, spacing: 8) {
             Picker("Project", selection: Binding(
                 get: {
-                    filteredProjects
-                        .first(where: { projectIdString($0) == (item.url ?? "") })
+                    // Always get the latest from viewModel to ensure synchronization
+                    let currentUrl = viewModel.selectedItem?.url ?? item.url ?? ""
+                    return filteredProjects
+                        .first(where: { projectIdString($0) == currentUrl })
                         .map { projectIdString($0) } ?? ""
                 },
                 set: { newValue in
-                    viewModel.updateItem { item in
-                        item.url = newValue.isEmpty ? nil : newValue
+                    print("[CollectionInspector] 🔗 Project selection changed to: \(newValue)")
+                    // Use Task to avoid publishing changes during view updates
+                    Task { @MainActor in
+                        viewModel.updateItem { item in
+                            item.url = newValue.isEmpty ? nil : newValue
+                        }
                     }
                 }
             )) {
-                if filteredProjects.isEmpty {
-                    Text("None").tag("")
-                } else {
-                    ForEach(filteredProjects, id: \.self) { p in
+                Text("Select a project...").tag("")
+                if !filteredProjects.isEmpty {
+                    ForEach(filteredProjects, id: \.persistentModelID) { p in
                         Text(p.title).tag(projectIdString(p))
                     }
                 }
@@ -410,15 +408,24 @@ struct CollectionInspector: View {
             
             ResourcePickerView(
                 resource: Binding(
-                    get: { item.resource },
+                    get: {
+                        // Always get the latest from viewModel to ensure synchronization
+                        viewModel.selectedItem?.resource ?? item.resource
+                    },
                     set: { newValue in
-                        viewModel.updateItem { item in
-                            item.resource = newValue
+                        print("[CollectionInspector] 📚 Resource changed to category: \(newValue.category), type: \(newValue.type)")
+                        // Use Task to avoid publishing changes during view updates
+                        Task { @MainActor in
+                            viewModel.updateItem { item in
+                                print("  📚 Updating item resource from \(item.resource.category)/\(item.resource.type) to \(newValue.category)/\(newValue.type)")
+                                item.resource = newValue
+                            }
                         }
                     }
                 ),
-                currentDocumentURL: nil
+                document: $document
             )
+            .id("resource-\(item.id)-\(item.resource.category)-\(item.resource.type)") // Force refresh when item or resource changes
         }
     }
     
@@ -434,22 +441,102 @@ struct CollectionInspector: View {
     
     // MARK: - Helpers
     
+    private func syncLocalState(from item: JSONCollectionItem) {
+        print("[CollectionInspector] 🔄 Syncing local state for item: \(item.id)")
+        print("  - Label: \(item.label)")
+        print("  - Summary: \(item.summary ?? "nil")")
+        print("  - URL: \(item.url ?? "nil")")
+        print("  - Type: \(item.type)")
+        print("  - Resource: \(item.resource.category)/\(item.resource.type)")
+        print("  - Thumbnail path: \(item.thumbnail.path)")
+        
+        // Cancel any pending debounce timers
+        labelDebounceTimer?.invalidate()
+        summaryDebounceTimer?.invalidate()
+        
+        // Sync all editing state
+        editingLabel = item.label
+        editingSummary = item.summary ?? ""
+        editingUrl = item.url ?? ""
+    }
+    
+    private func commitPendingChanges() {
+        // Cancel and trigger any pending debounce timers
+        if let timer = labelDebounceTimer, timer.isValid {
+            timer.invalidate()
+            commitLabel()
+        }
+        if let timer = summaryDebounceTimer, timer.isValid {
+            timer.invalidate()
+            commitSummary()
+        }
+    }
+    
+    private func commitLabel() {
+        guard let item = viewModel.selectedItem else {
+            print("[CollectionInspector] ⚠️ commitLabel: No selected item")
+            return
+        }
+        let trimmed = editingLabel.trimmingCharacters(in: .whitespacesAndNewlines)
+        print("[CollectionInspector] 📝 Committing label: '\(trimmed)' (was: '\(item.label)')")
+        if !trimmed.isEmpty && trimmed != item.label {
+            print("  ✅ Label changed, updating...")
+            viewModel.updateItemLabel(to: trimmed)
+        } else if trimmed.isEmpty {
+            print("  ⚠️ Label empty, restoring original")
+            // Restore original if user cleared it
+            editingLabel = item.label
+        } else {
+            print("  ℹ️ Label unchanged")
+        }
+    }
+    
+    private func commitSummary() {
+        guard let item = viewModel.selectedItem else {
+            print("[CollectionInspector] ⚠️ commitSummary: No selected item")
+            return
+        }
+        let trimmed = editingSummary.trimmingCharacters(in: .whitespacesAndNewlines)
+        let newSummary = trimmed.isEmpty ? nil : trimmed
+        print("[CollectionInspector] 📝 Committing summary: '\(newSummary ?? "nil")' (was: '\(item.summary ?? "nil")')")
+        if newSummary != item.summary {
+            print("  ✅ Summary changed, updating...")
+            viewModel.updateItem { item in
+                item.summary = newSummary
+            }
+            // Verify update
+            if let updatedItem = viewModel.selectedItem {
+                print("  ✅ Verified summary is now: '\(updatedItem.summary ?? "nil")'")
+            }
+        } else {
+            print("  ℹ️ Summary unchanged")
+        }
+    }
+    
+    private func commitUrl() {
+        guard let item = viewModel.selectedItem else { return }
+        let trimmed = editingUrl.trimmingCharacters(in: .whitespacesAndNewlines)
+        let newUrl = trimmed.isEmpty ? nil : trimmed
+        if newUrl != item.url {
+            viewModel.updateItem { item in
+                item.url = newUrl
+                if !trimmed.isEmpty {
+                    item.type = .urlLink
+                    item.filePath = nil
+                }
+            }
+        }
+    }
+    
     private var filteredProjects: [ProjectDoc] {
         if showPrivateProjects { return allProjects }
         return allProjects.filter { $0.isPublic }
     }
     
     private func projectIdString(_ p: ProjectDoc) -> String {
-        let mirror = Mirror(reflecting: p)
-        if let idChild = mirror.children.first(where: { $0.label == "id" }) {
-            if let uuidValue = idChild.value as? UUID {
-                return uuidValue.uuidString
-            }
-            if let strValue = idChild.value as? String {
-                return strValue
-            }
-        }
-        return String(describing: p)
+        // Use the persistentModelID's hashValue as a stable identifier
+        // This works better than Mirror reflection with SwiftData models
+        return p.persistentModelID.hashValue.description
     }
     
     private func previewURL(for original: String, edited: String) -> URL? {
@@ -500,40 +587,74 @@ struct CollectionInspector: View {
     
     private func copyOriginalIntoAssets() {
         guard let item = viewModel.selectedItem else { return }
-        guard let assets = ensureAssetsFolder() else { return }
+        guard ensureAssetsFolder() != nil else { return }
         guard !item.label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        guard let fp = item.filePath, !fp.pathToOriginal.isEmpty else { return }
+        guard let fp = item.filePath, let original = fp.pathToOriginal, !original.isEmpty else { return }
         
-        do {
-            let src = URL(fileURLWithPath: fp.pathToOriginal)
-            viewModel.copyFileToAssets(from: src)
-            errorMessage = nil
-        } catch {
-            errorMessage = error.localizedDescription
-        }
+        let src = URL(fileURLWithPath: original)
+        viewModel.copyFileToAssets(from: src)
+        errorMessage = nil
     }
     
     private func copyThumbnailIntoAssets(from src: URL) {
+        print("[CollectionInspector] 📎 Copying thumbnail from: \(src.path)")
         guard let item = viewModel.selectedItem,
-              let collectionName = viewModel.selectedCollectionName else { return }
-        guard let assets = ensureAssetsFolder() else { return }
-        guard !item.label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+              let collectionName = viewModel.selectedCollectionName else {
+            print("  ❌ No selected item or collection")
+            return
+        }
+        guard let assets = ensureAssetsFolder() else {
+            print("  ❌ Could not ensure assets folder")
+            return
+        }
+        guard !item.label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            print("  ❌ Item label is empty")
+            return
+        }
         
         do {
             let colFolder = try CollectionFS.ensureCollectionFolder(assetsFolder: assets, name: collectionName)
             let itemFolder = try CollectionFS.ensureItemFolder(collectionFolder: colFolder, itemLabel: item.label)
             let ext = src.pathExtension.isEmpty ? "png" : src.pathExtension
             let dest = itemFolder.appendingPathComponent("thumbnail").appendingPathExtension(ext)
+            print("  📋 Destination: \(dest.path)")
+            
             let fm = FileManager.default
-            if fm.fileExists(atPath: dest.path) { try? fm.removeItem(at: dest) }
+            
+            // CRITICAL FIX: Check if source is a file, not a directory
+            var isDirectory: ObjCBool = false
+            if fm.fileExists(atPath: src.path, isDirectory: &isDirectory) && isDirectory.boolValue {
+                print("  ❌ Source is a directory, not a file: \(src.path)")
+                errorMessage = "Cannot copy a folder as thumbnail. Please select an image file."
+                return
+            }
+            
+            // Remove existing thumbnail if present
+            if fm.fileExists(atPath: dest.path) {
+                print("  🗑️ Removing existing thumbnail")
+                try fm.removeItem(at: dest)
+            }
+            
+            // Copy the file (not folder)
             try fm.copyItem(at: src, to: dest)
+            print("  ✅ Thumbnail copied successfully")
+            
+            // Calculate relative path from assets folder
+            let relativePath = dest.relativePath(from: assets) ?? dest.lastPathComponent
+            print("  📂 Relative path: \(relativePath)")
             
             viewModel.updateItem { item in
-                item.thumbnail.pathToOriginal = src.path
-                item.thumbnail.pathToEdited = dest.path
+                item.thumbnail = AssetPath(id: UUID(), path: relativePath)
+                print("  💾 Thumbnail AssetPath set with path: \(item.thumbnail.path)")
             }
+            
+            // Force thumbnail refresh
+            thumbnailRefreshKey = UUID()
+            print("  🔄 Thumbnail refresh triggered")
+            
             errorMessage = nil
         } catch {
+            print("  ❌ Error: \(error.localizedDescription)")
             errorMessage = error.localizedDescription
         }
     }
@@ -552,17 +673,211 @@ struct CollectionInspector: View {
     }
     
     private func removeThumbnail() {
-        guard let item = viewModel.selectedItem else { return }
+        print("[CollectionInspector] 🗑️ Removing thumbnail")
+        guard let item = viewModel.selectedItem else {
+            print("  ❌ No selected item")
+            return
+        }
         
-        if !item.thumbnail.pathToEdited.isEmpty {
+        // Delete the file if it exists
+        if !item.thumbnail.path.isEmpty,
+           let assets = document.assetsFolder?.resolvedURL() {
+            let fileURL = assets.appendingPathComponent(item.thumbnail.path)
             let fm = FileManager.default
-            let p = item.thumbnail.pathToEdited
-            if fm.fileExists(atPath: p) { try? fm.removeItem(atPath: p) }
+            if fm.fileExists(atPath: fileURL.path) {
+                print("  🗑️ Deleting file: \(fileURL.path)")
+                try? fm.removeItem(at: fileURL)
+            }
         }
         
         viewModel.updateItem { item in
-            item.thumbnail.pathToOriginal = ""
-            item.thumbnail.pathToEdited = ""
+            item.thumbnail = AssetPath()  // Reset to empty
+            print("  💾 Thumbnail reset to empty AssetPath")
+        }
+        
+        // Force thumbnail refresh
+        thumbnailRefreshKey = UUID()
+        print("  ✅ Thumbnail removed and refresh triggered")
+    }
+}
+
+// MARK: - Helper Views
+
+private struct ThumbnailContentView: View {
+    let item: JSONCollectionItem
+    let document: FolioDocument
+    @Binding var isDropTargeted: Bool
+    let onCopyThumbnail: (URL) -> Void
+    let onPickImage: () -> Void
+    let onRemoveThumbnail: () -> Void
+    
+    var body: some View {
+        let _ = print("[ThumbnailContentView] 🖼️ Rendering for item: \(item.id)")
+        let _ = print("  - Thumbnail path: \(item.thumbnail.path)")
+        let _ = print("  - Thumbnail original: \(item.thumbnail.pathToOriginal ?? "nil")")
+        let _ = print("  - Thumbnail edited: \(item.thumbnail.pathToEdited ?? "nil")")
+        
+        if let url = urlForAssetPath(item.thumbnail) {
+            let _ = print("  - URL resolved: \(url.path)")
+            let readableURL = getReadableURL(url)
+            
+            if let readable = readableURL {
+                let _ = print("  - URL is readable: \(readable.path)")
+                if let img = NSImage(contentsOf: readable) {
+                    let _ = print("  ✅ Image loaded successfully")
+                    thumbnailPreview(image: img, url: readable)
+                } else {
+                    let _ = print("  ❌ Failed to load NSImage from URL")
+                    Text("Failed to load image")
+                        .foregroundStyle(.red)
+                }
+            } else {
+                let _ = print("  ⚠️ URL not readable, showing permission request")
+                PermissionRequiredRow(title: "Thumbnail", url: url) { granted in
+                    onCopyThumbnail(granted)
+                }
+            }
+        } else {
+            let _ = print("  📭 No thumbnail URL, showing drop target")
+            DropTargetView(
+                isTargeted: $isDropTargeted,
+                title: "Drop image or click to browse",
+                acceptImagesOnly: true
+            ) { url in
+                onCopyThumbnail(url)
+            }
+            .onTapGesture { onPickImage() }
+        }
+    }
+    
+    private func previewURL(for original: String, edited: String) -> URL? {
+        if !edited.isEmpty { return URL(fileURLWithPath: edited) }
+        if !original.isEmpty { return URL(fileURLWithPath: original) }
+        return nil
+    }
+    
+    private func urlForAssetPath(_ asset: AssetPath) -> URL? {
+        if !asset.path.isEmpty, let assetsURL = document.assetsFolder?.resolvedURL() {
+            return assetsURL.appendingPathComponent(asset.path)
+        }
+        if let edited = asset.pathToEdited, !edited.isEmpty { return URL(fileURLWithPath: edited) }
+        if let original = asset.pathToOriginal, !original.isEmpty { return URL(fileURLWithPath: original) }
+        return nil
+    }
+    
+    private func getReadableURL(_ url: URL) -> URL? {
+        if let resolved = PermissionHelper.resolvedURL(forOriginalPath: url.path, from: document.documentWrapper) {
+            return resolved
+        }
+        return PermissionHelper.isReadable(url) ? url : nil
+    }
+    
+    private func thumbnailPreview(image: NSImage, url: URL) -> some View {
+        VStack(spacing: 8) {
+            Image(nsImage: image)
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .frame(maxHeight: 160)
+                .cornerRadius(8)
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(.secondary.opacity(0.2)))
+            
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(url.lastPathComponent)
+                        .font(.caption)
+                        .lineLimit(1)
+                    Text(url.path)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                Spacer()
+                Button(role: .destructive) {
+                    onRemoveThumbnail()
+                } label: {
+                    Image(systemName: "trash")
+                        .font(.caption)
+                }
+                .buttonStyle(.borderless)
+            }
         }
     }
 }
+
+private struct FileSourceContentView: View {
+    let item: JSONCollectionItem
+    let document: FolioDocument
+    @Binding var isDropTargeted: Bool
+    @ObservedObject var viewModel: CollectionViewModel
+    let onPickFile: () -> Void
+    let onRemoveFile: () -> Void
+    
+    var body: some View {
+        if let fp = item.filePath, let url = urlForAssetPath(fp) {
+            let effectiveURL = getEffectiveURL(url)
+            
+            if let effective = effectiveURL {
+                let preloaded = NSImage(contentsOf: effective)
+                FilePreviewRow(url: effective, title: "File", preloadedImage: preloaded) {
+                    onRemoveFile()
+                }
+            } else {
+                PermissionRequiredRow(title: "File", url: url) { granted in
+                    viewModel.updateItem { item in
+                        if item.filePath == nil {
+                            item.filePath = AssetPath(pathToOriginal: granted.path, pathToEdited: "")
+                        } else {
+                            if item.filePath?.pathToEdited?.isEmpty ?? true {
+                                item.filePath?.pathToOriginal = granted.path
+                            } else {
+                                item.filePath?.pathToEdited = granted.path
+                            }
+                        }
+                        item.type = .file
+                        item.url = nil
+                    }
+                }
+            }
+        } else {
+            DropTargetView(
+                isTargeted: $isDropTargeted,
+                title: "Drag file or click to browse"
+            ) { url in
+                viewModel.updateItem { item in
+                    var fp = item.filePath ?? AssetPath()
+                    fp.pathToOriginal = url.path
+                    item.filePath = fp
+                    item.type = .file
+                    item.url = nil
+                }
+            }
+            .onTapGesture { onPickFile() }
+        }
+    }
+    
+    private func previewURL(for original: String, edited: String) -> URL? {
+        if !edited.isEmpty { return URL(fileURLWithPath: edited) }
+        if !original.isEmpty { return URL(fileURLWithPath: original) }
+        return nil
+    }
+    
+    private func getEffectiveURL(_ url: URL) -> URL? {
+        if PermissionHelper.isReadable(url) {
+            return url
+        }
+        if let resolved = PermissionHelper.resolvedURL(forOriginalPath: url.path, from: document.documentWrapper) {
+            return resolved
+        }
+        return nil
+    }
+    
+    private func urlForAssetPath(_ asset: AssetPath) -> URL? {
+        if !asset.path.isEmpty, let assetsURL = document.assetsFolder?.resolvedURL() {
+            return assetsURL.appendingPathComponent(asset.path)
+        }
+        if let edited = asset.pathToEdited, !edited.isEmpty { return URL(fileURLWithPath: edited) }
+        if let original = asset.pathToOriginal, !original.isEmpty { return URL(fileURLWithPath: original) }
+        return nil
+    }
+}
+

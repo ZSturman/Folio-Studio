@@ -48,6 +48,8 @@
 					<string>application/json</string>
 				</array>
 			</dict>
+			<key>LSTypeIsPackage</key>
+			<true/>
 		</dict>
 	</array>
 </dict>

@@ -111,7 +111,7 @@ struct ImageSlotView: View {
                 
                 Group {
                     if let url = editedURLIfExists {
-                        let readableURL = PermissionHelper.resolvedURL(forOriginalPath: url.path)
+                        let readableURL = PermissionHelper.resolvedURL(forOriginalPath: url.path, from: document.documentWrapper)
                         ?? (PermissionHelper.isReadable(url) ? url : nil)
                         
                         if let u = readableURL,
@@ -349,7 +349,16 @@ struct ImageSlotView: View {
             )
             errorMessage = nil
         } catch {
-            errorMessage = "Copy to edited folder failed: \(error.localizedDescription)"
+            let nsError = error as NSError
+            // Check if this is a permission error
+            if nsError.domain == NSCocoaErrorDomain && 
+               (nsError.code == NSFileWriteNoPermissionError || 
+                nsError.code == NSFileReadNoPermissionError) {
+                errorMessage = "Permission denied. Please grant access to the assets folder."
+                handlePermissionError(for: editedRoot)
+            } else {
+                errorMessage = "Copy to edited folder failed: \(error.localizedDescription)"
+            }
         }
     }
     
@@ -388,7 +397,16 @@ struct ImageSlotView: View {
                 do {
                     try FileManager.default.copyItem(at: url, to: destURL)
                 } catch {
-                    errorMessage = "Copy to edited folder failed: \(error.localizedDescription)"
+                    let nsError = error as NSError
+                    // Check if this is a permission error
+                    if nsError.domain == NSCocoaErrorDomain && 
+                       (nsError.code == NSFileWriteNoPermissionError || 
+                        nsError.code == NSFileReadNoPermissionError) {
+                        errorMessage = "Permission denied. Please grant access to the assets folder."
+                        handlePermissionError(for: root)
+                    } else {
+                        errorMessage = "Copy to edited folder failed: \(error.localizedDescription)"
+                    }
                     return
                 }
             }
@@ -464,7 +482,7 @@ struct ImageSlotView: View {
               let root = loc.resolvedURL()
         else { return }
         
-        let originalURL = URL(fileURLWithPath: current.pathToOriginal)
+        let originalURL = URL(fileURLWithPath: current.pathToOriginal ?? "")
         
         let sourceImagesFolder = root.appendingPathComponent("SourceImages", isDirectory: true)
         do {
@@ -501,9 +519,26 @@ struct ImageSlotView: View {
             return
         }
         
-        let readableURL = PermissionHelper.resolvedURL(forOriginalPath: url.path)
+        let readableURL = PermissionHelper.resolvedURL(forOriginalPath: url.path, from: document.documentWrapper)
         ?? (PermissionHelper.isReadable(url) ? url : nil)
         
         requiresPermission = (readableURL == nil)
+    }
+    
+    /// Handle permission errors by prompting the user to grant access
+    private func handlePermissionError(for folderURL: URL) {
+        guard let assetsFolderPath = document.assetsFolder?.path else { return }
+        
+        DispatchQueue.main.async {
+            let success = AssetFolderManager.shared.requestPermissionForExistingFolder(
+                path: assetsFolderPath,
+                in: self.$document
+            )
+            
+            if success {
+                self.errorMessage = nil
+                self.permissionRefreshToken = UUID()
+            }
+        }
     }
 }

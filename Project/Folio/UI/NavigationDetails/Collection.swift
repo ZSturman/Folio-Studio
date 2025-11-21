@@ -13,27 +13,14 @@ import AppKit
 struct CollectionTabView: View {
     @Binding var document: FolioDocument
     @EnvironmentObject private var viewModel: CollectionViewModel
+    @EnvironmentObject private var inspectorState: InspectorState
     @State private var showDeleteCollectionAlert = false
     @Environment(\.undoManager) private var undoManager
 
     var body: some View {
-        HStack(spacing: 0) {
-            // Main content area - always shows collection details
-            mainContentView
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            
-            // Inspector panel for selected items
-            if viewModel.showInspector {
-                Divider()
-                CollectionInspector(
-                    viewModel: viewModel,
-                    document: $document,
-                    assetsFolder: document.assetsFolder?.resolvedURL()
-                )
-                .frame(width: 320)
-            }
-        }
-        .onAppear {
+        mainContentView
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .onAppear {
             // Update viewModel's undoManager reference
             viewModel.undoManager = undoManager
         }
@@ -113,6 +100,7 @@ struct CollectionTabView: View {
                                         isSelected: viewModel.selectedItemId == item.id,
                                         onSelect: {
                                             viewModel.selectItem(id: item.id)
+                                            inspectorState.isVisible = true
                                         }
                                     )
                                 }
@@ -236,11 +224,11 @@ struct CollectionItemCard: View {
     }
     
     private func thumbnailURL(for item: JSONCollectionItem) -> URL? {
-        if !item.thumbnail.pathToEdited.isEmpty {
-            return URL(fileURLWithPath: item.thumbnail.pathToEdited)
+        if !(item.thumbnail.pathToEdited?.isEmpty ?? true) {
+            return URL(fileURLWithPath: item.thumbnail.pathToEdited ?? "")
         }
-        if !item.thumbnail.pathToOriginal.isEmpty {
-            return URL(fileURLWithPath: item.thumbnail.pathToOriginal)
+        if !(item.thumbnail.pathToOriginal?.isEmpty ?? true) {
+            return URL(fileURLWithPath: item.thumbnail.pathToOriginal ?? "")
         }
         return nil
     }
@@ -256,7 +244,9 @@ struct CollectionItemCard: View {
     private func statusText(for item: JSONCollectionItem) -> String {
         switch item.type {
         case .file:
-            let hasFile = !(item.filePath?.pathToOriginal ?? "").isEmpty || !(item.filePath?.pathToEdited ?? "").isEmpty
+            let hasFile = (item.filePath?.path.isEmpty == false)
+                || !(item.filePath?.pathToOriginal ?? "").isEmpty
+                || !(item.filePath?.pathToEdited ?? "").isEmpty
             return hasFile ? "✓" : "No file"
         case .urlLink:
             let hasURL = !(item.url ?? "").isEmpty

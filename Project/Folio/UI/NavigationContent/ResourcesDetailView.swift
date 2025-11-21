@@ -51,7 +51,7 @@ struct ResourcesDetailView: View {
                                     }
                                 }
 
-                                ResourcePickerView(resource: $document.resources[index])
+                                ResourcePickerView(resource: $document.resources[index], document: $document)
                                     .padding(12)
                                     .overlay(
                                         RoundedRectangle(cornerRadius: 8)

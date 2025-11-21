@@ -6,7 +6,7 @@
 //
 
 
-struct CollectionSection: Codable {
+struct CollectionSection: Codable, Equatable {
     var images: [String: AssetPath]
     var items: [JSONCollectionItem]
 

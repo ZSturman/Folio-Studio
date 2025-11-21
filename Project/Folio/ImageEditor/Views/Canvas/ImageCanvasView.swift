@@ -113,7 +113,7 @@ struct ImageCanvasView: View {
     @ViewBuilder
     private func cropOverlay(in size: CGSize, aspectFrameSize: CGSize) -> some View {
         // Show the crop region as an overlay with dimmed areas outside
-        if let ratio = viewModel.selectedAspectRatio.ratio {
+        if viewModel.selectedAspectRatio.ratio != nil {
             ZStack {
                 // Dimmed overlay for areas outside crop
                 Color.black.opacity(0.5)

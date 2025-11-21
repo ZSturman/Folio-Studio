@@ -13,6 +13,7 @@ import Combine
 @main
 struct FolioApp: App {
     @StateObject private var session = AppSession()
+    @StateObject private var inspectorState = InspectorState()
     @AppStorage("launcherAutoOpen") private var launcherAutoOpen = true
     @Environment(\.openWindow) private var openWindow
     
@@ -34,6 +35,7 @@ struct FolioApp: App {
         DocumentGroup(newDocument:  FolioDocument() ) { file in
             ContentView(document: file.$document, fileURL: file.fileURL)
                 .environmentObject(session)
+                .environmentObject(inspectorState)
                 .background(SeedBootstrapper())
             
         }

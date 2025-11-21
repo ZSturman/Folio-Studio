@@ -23,6 +23,9 @@ struct FolioDocument: FileDocument, Codable {
     var id: UUID
     var filePath: URL?
     
+    // Internal: FileWrapper for bookmark storage (not encoded in JSON)
+    nonisolated(unsafe) var documentWrapper: FileWrapper?
+    
     // BASIC DATA
     var title: String
     var subtitle: String
@@ -77,13 +80,40 @@ struct FolioDocument: FileDocument, Codable {
         self.requiresFollowUp = false
         
         self.values = [:]
+        
+        // Create empty package structure
+        self.documentWrapper = FileWrapper(directoryWithFileWrappers: [:])
     }
 
     // READ hook
     init(configuration: ReadConfiguration) throws {
-        guard let data = configuration.file.regularFileContents else {
-            throw CocoaError(.fileReadCorruptFile)
+        // Check if this is a package (directory) or legacy single file
+        let wrapper = configuration.file
+        
+        let data: Data
+        let isLegacyFormat: Bool
+        
+        if wrapper.isDirectory {
+            // New package format: read content.json
+            guard let contentWrapper = wrapper.fileWrappers?["content.json"],
+                  let contentData = contentWrapper.regularFileContents else {
+                throw CocoaError(.fileReadCorruptFile)
+            }
+            data = contentData
+            isLegacyFormat = false
+            self.documentWrapper = wrapper
+        } else {
+            // Legacy single-file format: migrate to package
+            guard let legacyData = wrapper.regularFileContents else {
+                throw CocoaError(.fileReadCorruptFile)
+            }
+            data = legacyData
+            isLegacyFormat = true
+            
+            // Create new package structure
+            self.documentWrapper = FileWrapper(directoryWithFileWrappers: [:])
         }
+        
         let decoded = try JSONDecoder().decode(Self.self, from: data)
         self.id = decoded.id
         self.filePath = decoded.filePath
@@ -130,11 +160,63 @@ struct FolioDocument: FileDocument, Codable {
                 self.collection[key] = updatedSection
             }
         }
+        
+        // Migrate legacy image format: pathToOriginal/pathToEdited -> id/path
+        for (key, var assetPath) in self.images {
+            if let pathToEdited = assetPath.pathToEdited, !pathToEdited.isEmpty {
+                // Legacy format detected - migrate to new format
+                if let pathToOriginal = assetPath.pathToOriginal, !pathToOriginal.isEmpty {
+                    // Try to migrate original to app data
+                    let originalURL = URL(fileURLWithPath: pathToOriginal)
+                    if FileManager.default.fileExists(atPath: originalURL.path),
+                       let newID = try? ImageAssetManager.shared.storeOriginalFromURL(originalURL) {
+                        assetPath.id = newID
+                        
+                        // Convert absolute path to relative path
+                        if let assetsFolderPath = self.assetsFolder?.path {
+                            let assetsFolderURL = URL(fileURLWithPath: assetsFolderPath)
+                            let editedURL = URL(fileURLWithPath: pathToEdited)
+                            if let relativePath = editedURL.relativePath(from: assetsFolderURL) {
+                                assetPath.path = relativePath
+                            } else {
+                                assetPath.path = editedURL.lastPathComponent
+                            }
+                        } else {
+                            assetPath.path = URL(fileURLWithPath: pathToEdited).lastPathComponent
+                        }
+                        
+                        // Clear legacy properties
+                        assetPath.pathToOriginal = nil
+                        assetPath.pathToEdited = nil
+                        
+                        self.images[key] = assetPath
+                        print("[Migration] Migrated image '\(key)' to new format with ID: \(newID)")
+                    }
+                }
+            }
+        }
+        
+        // Migrate legacy bookmarks to new system
+        if isLegacyFormat {
+            print("[Migration] Converting .folio from single-file to package format")
+            let bookmarks = BookmarkManager.extractBookmarksForMigration(from: self)
+            
+            // Store bookmarks in new system
+            for (path, bookmarkData) in bookmarks {
+                try? BookmarkManager.shared.store(
+                    bookmark: bookmarkData,
+                    forPath: path,
+                    in: self.documentWrapper
+                )
+            }
+        }
     }
 
     func snapshot(contentType: UTType) throws -> Data {
-        // Encode the document state and report size
-        let data = try JSONEncoder().encode(self)
+        // Encode the document state (JSON only, no bookmarks)
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        let data = try encoder.encode(self)
         return data
     }
     
@@ -146,7 +228,22 @@ struct FolioDocument: FileDocument, Codable {
 
     // SAVE hook continuation
     func fileWrapper(snapshot: Data, configuration: WriteConfiguration) throws -> FileWrapper {
-        return .init(regularFileWithContents: snapshot)
+        // Use existing wrapper or create new package
+        let wrapper = self.documentWrapper ?? FileWrapper(directoryWithFileWrappers: [:])
+        
+        // Update or add content.json
+        if let existingContent = wrapper.fileWrappers?["content.json"] {
+            wrapper.removeFileWrapper(existingContent)
+        }
+        
+        let contentWrapper = FileWrapper(regularFileWithContents: snapshot)
+        contentWrapper.preferredFilename = "content.json"
+        wrapper.addFileWrapper(contentWrapper)
+        
+        // .system folder with bookmarks is already managed by BookmarkManager
+        // and persists across saves
+        
+        return wrapper
     }
 
     // MARK: Codable
@@ -214,7 +311,7 @@ struct FolioDocument: FileDocument, Codable {
         if let loc = try? c.decodeIfPresent(AssetsFolderLocation.self, forKey: .assetsFolder) {
             self.assetsFolder = loc
         } else if let legacyPath = try? c.decodeIfPresent(String.self, forKey: .assetsFolder) {
-            self.assetsFolder = AssetsFolderLocation(path: legacyPath, bookmarkData: nil)
+            self.assetsFolder = AssetsFolderLocation(path: legacyPath)
         } else if let legacyURL = try? c.decodeIfPresent(URL.self, forKey: .assetsFolder) {
             self.assetsFolder = AssetsFolderLocation(url: legacyURL)
         } else {
@@ -259,6 +356,9 @@ struct FolioDocument: FileDocument, Codable {
             extras[key.stringValue] = try all.decode(JSONValue.self, forKey: key)
         }
         self.values = extras
+        
+        // DocumentWrapper is not stored in JSON - will be set by init(configuration:)
+        self.documentWrapper = nil
     }
 
 
@@ -301,5 +401,44 @@ struct FolioDocument: FileDocument, Codable {
         for (k, v) in values {
             try dyn.encode(v, forKey: AnyCodingKey(stringValue: k)!)
         }
+    }
+    
+    // MARK: - Helper Methods
+    
+    /// Get resolved URL for assets folder using BookmarkManager
+    func resolvedAssetsFolderURL() -> URL? {
+        return assetsFolder?.resolvedURL(from: documentWrapper)
+    }
+}
+
+// MARK: - Equatable
+extension FolioDocument: Equatable {
+    static func == (lhs: FolioDocument, rhs: FolioDocument) -> Bool {
+        return lhs.id == rhs.id &&
+               lhs.title == rhs.title &&
+               lhs.subtitle == rhs.subtitle &&
+               lhs.isPublic == rhs.isPublic &&
+               lhs.summary == rhs.summary &&
+               lhs.domain == rhs.domain &&
+               lhs.category == rhs.category &&
+               lhs.status == rhs.status &&
+               lhs.phase == rhs.phase &&
+               lhs.featured == rhs.featured &&
+               lhs.requiresFollowUp == rhs.requiresFollowUp &&
+               lhs.createdAt == rhs.createdAt &&
+               lhs.updatedAt == rhs.updatedAt &&
+               lhs.assetsFolder == rhs.assetsFolder &&
+               lhs.images == rhs.images &&
+               lhs.tags == rhs.tags &&
+               lhs.mediums == rhs.mediums &&
+               lhs.genres == rhs.genres &&
+               lhs.topics == rhs.topics &&
+               lhs.subjects == rhs.subjects &&
+               lhs.description == rhs.description &&
+               lhs.story == rhs.story &&
+               lhs.resources == rhs.resources &&
+               lhs.collection == rhs.collection &&
+               lhs.details == rhs.details &&
+               lhs.values == rhs.values
     }
 }

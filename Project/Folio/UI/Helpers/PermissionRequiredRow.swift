@@ -30,7 +30,7 @@ struct PermissionRequiredRow: View {
             }
             HStack {
                 Button("Grant Access") {
-                    if let granted = PermissionHelper.requestAccess(for: url) {
+                    if let granted = PermissionHelper.requestAccess(for: url, in: nil) {
                         onGranted(granted)
                     }
                 }

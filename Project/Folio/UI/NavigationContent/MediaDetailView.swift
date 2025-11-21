@@ -34,16 +34,16 @@ struct MediaDetailView: View {
 
     private var canShowCopyOriginalButton: Bool {
         guard let current = jsonImage,
-              !current.pathToOriginal.isEmpty,
-              !current.pathToEdited.isEmpty,
+              !(current.pathToOriginal?.isEmpty ?? true),
+              !(current.pathToEdited?.isEmpty ?? true),
               let loc = document.assetsFolder,
               let root = loc.resolvedURL()
         else {
             return false
         }
 
-        let originalURL = URL(fileURLWithPath: current.pathToOriginal)
-        let editedURL = URL(fileURLWithPath: current.pathToEdited)
+        let originalURL = URL(fileURLWithPath: current.pathToOriginal ?? "")
+        let editedURL = URL(fileURLWithPath: current.pathToEdited ?? "")
         
         // Don't show if paths are the same
         if originalURL.standardizedFileURL.path == editedURL.standardizedFileURL.path {
@@ -88,7 +88,7 @@ struct MediaDetailView: View {
               let root = loc.resolvedURL()
         else { return }
 
-        let originalURL = URL(fileURLWithPath: current.pathToOriginal)
+        let originalURL = URL(fileURLWithPath: current.pathToOriginal ?? "")
 
         let sourceImagesFolder = root.appendingPathComponent("SourceImages", isDirectory: true)
         do {
@@ -129,7 +129,7 @@ struct MediaDetailView: View {
 
     private var isCurrentAssetEmpty: Bool {
         guard let asset = jsonImage else { return true }
-        return asset.pathToOriginal.isEmpty && asset.pathToEdited.isEmpty
+        return (asset.pathToOriginal?.isEmpty ?? true) && (asset.pathToEdited?.isEmpty ?? true)
     }
     
     private func clearImageButKeepKey() {
@@ -156,16 +156,16 @@ struct MediaDetailView: View {
     
     private func loadImageIntoEditor() {
         guard let assetPath = jsonImage,
-              !assetPath.pathToOriginal.isEmpty else {
+              !(assetPath.pathToOriginal?.isEmpty ?? true) else {
             imageEditorViewModel.removeImage()
             return
         }
         
         // ALWAYS load from original for non-destructive editing
-        let originalURL = URL(fileURLWithPath: assetPath.pathToOriginal)
+        let originalURL = URL(fileURLWithPath: assetPath.pathToOriginal ?? "")
         
         // Resolve with permission helper if needed
-        let resolvedURL = PermissionHelper.resolvedURL(forOriginalPath: originalURL.path)
+        let resolvedURL = PermissionHelper.resolvedURL(forOriginalPath: originalURL.path, from: document.documentWrapper)
             ?? (PermissionHelper.isReadable(originalURL) ? originalURL : nil)
         
         guard let url = resolvedURL,
@@ -174,7 +174,7 @@ struct MediaDetailView: View {
         }
         
         // Set aspect ratio based on label (use custom aspect if set)
-        if case .custom = selectedImageLabel, let customAspect = assetPath.customAspectRatio {
+        if case .custom = selectedImageLabel, let _ = assetPath.customAspectRatio {
             // Custom label with aspect override - need to map CGSize to AspectRatio
             // For now, use free and the viewmodel will handle the custom size
             imageEditorViewModel.selectedAspectRatio = .free
@@ -186,7 +186,7 @@ struct MediaDetailView: View {
         imageEditorViewModel.loadImage(image)
         
         // Load existing transform from sidecar if it exists
-        let editedURL = URL(fileURLWithPath: assetPath.pathToEdited)
+        let editedURL = URL(fileURLWithPath: assetPath.pathToEdited ?? "")
         if let sidecar = EditedSidecarIO.load(for: editedURL) {
             // Convert UserTransform to ImageTransform
             imageEditorViewModel.currentTransform = ImageTransform(
@@ -202,19 +202,19 @@ struct MediaDetailView: View {
     
     private func saveTransformChanges() {
         guard let assetPath = jsonImage,
-              !assetPath.pathToOriginal.isEmpty,
-              !assetPath.pathToEdited.isEmpty else {
+              !(assetPath.pathToOriginal?.isEmpty ?? true),
+              !(assetPath.pathToEdited?.isEmpty ?? true) else {
             return
         }
         
         // Load from ORIGINAL for rendering
-        let originalURL = URL(fileURLWithPath: assetPath.pathToOriginal)
+        let originalURL = URL(fileURLWithPath: assetPath.pathToOriginal ?? "")
         guard let originalImage = NSImage(contentsOf: originalURL) else {
             errorMessage = "Failed to load original image"
             return
         }
         
-        let editedURL = URL(fileURLWithPath: assetPath.pathToEdited)
+        let editedURL = URL(fileURLWithPath: assetPath.pathToEdited ?? "")
         
         // Convert ImageTransform to UserTransform
         let userTransform = UserTransform(
@@ -234,7 +234,7 @@ struct MediaDetailView: View {
         let options = CoverRenderOptions(
             targetAspect: targetAspect,
             targetMaxPixels: selectedImageLabel.preferredMaxPixels,
-            output: .png,
+            output: OutputFormat.png,
             enforceCover: true
         )
         
@@ -249,21 +249,24 @@ struct MediaDetailView: View {
         }
         
         // Save to edited path
+        guard let tiffData = renderedImage.tiffRepresentation,
+              let bitmapRep = NSBitmapImageRep(data: tiffData),
+              let pngData = bitmapRep.representation(using: NSBitmapImageRep.FileType.png, properties: [:]) else {
+            errorMessage = "Failed to convert image"
+            return
+        }
+        
         do {
-            if let tiffData = renderedImage.tiffRepresentation,
-               let bitmapRep = NSBitmapImageRep(data: tiffData),
-               let pngData = bitmapRep.representation(using: .png, properties: [:]) {
-                try pngData.write(to: editedURL)
-                
-                // Save sidecar with transform data
-                let sidecar = EditedSidecar(
-                    transform: userTransform,
-                    aspectOverride: targetAspect
-                )
-                EditedSidecarIO.save(sidecar, for: editedURL)
-                
-                errorMessage = nil
-            }
+            try pngData.write(to: editedURL)
+            
+            // Save sidecar with transform data
+            let sidecar = EditedSidecar(
+                transform: userTransform,
+                aspectOverride: targetAspect
+            )
+            EditedSidecarIO.save(sidecar, for: editedURL)
+            
+            errorMessage = nil
         } catch {
             errorMessage = "Failed to save: \(error.localizedDescription)"
         }
@@ -304,6 +307,7 @@ struct MediaDetailView: View {
                 // Image canvas with ImageEditor's ImageCanvasView
                 ImageCanvasView(viewModel: imageEditorViewModel)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .frame(minHeight: 400)
             }
             
             if let error = errorMessage {
@@ -328,7 +332,7 @@ struct MediaDetailView: View {
     // MARK: - Import Image
     
     private func importImageFromURL(_ sourceURL: URL) {
-        guard let loc = document.assetsFolder else {
+        guard document.assetsFolder != nil else {
             _ = AssetFolderManager.shared.ensureAssetsFolder(for: $document)
             guard document.assetsFolder != nil else {
                 errorMessage = "Please select an assets folder first"

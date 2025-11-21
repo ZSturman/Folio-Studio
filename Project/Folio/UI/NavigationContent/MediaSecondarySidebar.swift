@@ -45,7 +45,7 @@ struct MediaSecondarySidebar: View {
         case .banner:
             return "photo.on.rectangle.angled"
         case .heroBanner:
-            return "rectangle.landscape"
+            return "photo.fill.on.rectangle.fill"
         case .poster:
             return "doc.richtext"
         case .icon:

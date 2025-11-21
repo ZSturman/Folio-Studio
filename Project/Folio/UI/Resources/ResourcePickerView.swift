@@ -15,10 +15,8 @@ import UniformTypeIdentifiers
 ///   If you do not have this yet, pass `nil` and the "Copy to local folder" button will disable.
 struct ResourcePickerView: View {
     @Binding var resource: JSONResource
+    @Binding var document: FolioDocument
     @Environment(\.modelContext) private var modelContext
-
-    /// Optional. Used only when copying a dropped/selected file to a local sibling folder.
-    var currentDocumentURL: URL?
 
     // All categories and types from SwiftData
     @Query(sort: [SortDescriptor(\ResourceItemCategory.name, order: .forward)])
@@ -37,8 +35,8 @@ struct ResourcePickerView: View {
     // File import + drop state for localDownload
     @State private var showFileImporter = false
     @State private var pickedFileURL: URL? = nil
-    @State private var copySuggestionVisible = false
     @State private var copyError: String? = nil
+    @State private var editableFileName: String = ""
 
     // Map the resource's string values to SwiftData objects
     private var selectedCategoryBinding: Binding<ResourceItemCategory?> {
@@ -65,7 +63,6 @@ struct ResourcePickerView: View {
 
                 // Reset URL UI when category changes
                 pickedFileURL = nil
-                copySuggestionVisible = false
                 copyError = nil
             }
         )
@@ -136,31 +133,21 @@ struct ResourcePickerView: View {
                         Picker("Project", selection: Binding(
                             get: {
                                 // Map resource.url to a ProjectDoc if possible
-                                if let match = projects.first(where: { projectIdString($0) == resource.url }) {
-                                    return projectIdString(match)
+                                if let match = projects.first(where: { $0.filePath == resource.url }) {
+                                    return match.filePath
                                 }
-                                // Fallback: snap to the first project
-                                if let first = projects.first {
-                                    let id = projectIdString(first)
-                                    if resource.url != id || resource.type != first.title {
-                                        DispatchQueue.main.async {
-                                            resource.url = id
-                                            resource.type = first.title
-                                        }
-                                    }
-                                    return id
-                                }
+                                // Return empty if no match - don't auto-snap to avoid conflicts
                                 return ""
                             },
                             set: { newValue in
                                 // Also set type to selected project's title
-                                guard let selected = projects.first(where: { projectIdString($0) == newValue }) else { return }
-                                resource.url = newValue
+                                guard let selected = projects.first(where: { $0.filePath == newValue }) else { return }
+                                resource.url = selected.filePath
                                 resource.type = selected.title
                             })
                         ) {
                             ForEach(projects, id: \.self) { p in
-                                Text(p.title).tag(projectIdString(p))
+                                Text(p.title).tag(p.filePath)
                             }
                         }
                         .pickerStyle(.menu)
@@ -217,52 +204,49 @@ struct ResourcePickerView: View {
                         .font(.subheadline)
                         .bold()
 
-                    DropTarget(
-                        isTargeted: $isDropTargeted,
-                        pickedFileURL: $pickedFileURL,
-                        onPick: handlePickedFile
-                    )
-                    .frame(maxWidth: .infinity, minHeight: 120)
-                    .background(
-                        RoundedRectangle(cornerRadius: 10)
-                            .stroke(isDropTargeted ? .blue : .secondary, style: StrokeStyle(lineWidth: 1, dash: [6]))
-                    )
-                    .contentShape(Rectangle())
-                    .onTapGesture { showFileImporter = true }
-
-                    if let file = pickedFileURL {
-                        LabeledContent("Selected") {
-                            Text(file.path)
-                                .font(.footnote)
-                                .textSelection(.enabled)
-                        }
+                    // File preview or drop target
+                    if let fileURL = pickedFileURL ?? existingFileURL() {
+                        // Show small file preview
+                        filePreviewCard(url: fileURL)
+                    } else {
+                        DropTarget(
+                            isTargeted: $isDropTargeted,
+                            pickedFileURL: $pickedFileURL,
+                            onPick: handlePickedFile
+                        )
+                        .frame(maxWidth: .infinity, minHeight: 120)
+                        .background(
+                            RoundedRectangle(cornerRadius: 10)
+                                .stroke(isDropTargeted ? .blue : .secondary, style: StrokeStyle(lineWidth: 1, dash: [6]))
+                        )
+                        .contentShape(Rectangle())
+                        .onTapGesture { showFileImporter = true }
                     }
 
-                    if copySuggestionVisible {
-                        HStack(spacing: 8) {
-                            Button {
-                                do {
-                                    try copyToSiblingFolderAndCaptureURL()
-                                } catch {
-                                    copyError = error.localizedDescription
+                    // Type field (filename editor)
+                    LabeledContent {
+                        HStack(spacing: 4) {
+                            TextField("No file added", text: $editableFileName)
+                                .textFieldStyle(.roundedBorder)
+                                .disabled(pickedFileURL == nil && existingFileURL() == nil)
+                                .onChange(of: editableFileName) { _, newName in
+                                    handleFileNameChange(newName)
                                 }
-                            } label: {
-                                Label("Copy to local folder", systemImage: "doc.on.doc")
-                            }
-                            .disabled(currentDocumentURL == nil)
-
-                            if currentDocumentURL == nil {
-                                Text("Provide currentDocumentURL to enable copying.")
-                                    .font(.footnote)
+                            
+                            if let ext = fileExtension() {
+                                Text(".\(ext)")
                                     .foregroundStyle(.secondary)
+                                    .font(.body)
                             }
                         }
+                    } label: {
+                        Text("Type")
+                    }
 
-                        if let copyError {
-                            Text(copyError)
-                                .font(.footnote)
-                                .foregroundStyle(.red)
-                        }
+                    if let copyError {
+                        Text(copyError)
+                            .font(.footnote)
+                            .foregroundStyle(.red)
                     }
                 }
                 .fileImporter(
@@ -293,8 +277,12 @@ struct ResourcePickerView: View {
             }
             // If localLink and resource.url is empty, seed with first visible project and set type to its title
             if isLocalLink, resource.url.isEmpty, let first = filteredProjects.first {
-                resource.url = projectIdString(first)
+                resource.url = first.filePath
                 resource.type = first.title
+            }
+            // If localDownload, initialize editableFileName from resource.type
+            if isLocalDownload {
+                editableFileName = resource.type
             }
         }
     }
@@ -303,55 +291,161 @@ struct ResourcePickerView: View {
 
     private func handlePickedFile(_ url: URL) {
         pickedFileURL = url
-        resource.url = url.path // save chosen path immediately
-        copySuggestionVisible = true
         copyError = nil
+        
+        // Automatically copy to AssetFolder/Resources
+        copyToAssetFolderResources(sourceURL: url)
     }
-
-    private func copyToSiblingFolderAndCaptureURL() throws {
-        guard let src = pickedFileURL else { return }
-        guard let docURL = currentDocumentURL else { return }
-
-        let root = docURL.deletingLastPathComponent()
-        let folder = root.appendingPathComponent("LocalResources", isDirectory: true)
-
-        let fm = FileManager.default
-        if !fm.fileExists(atPath: folder.path) {
-            try fm.createDirectory(at: folder, withIntermediateDirectories: true, attributes: nil)
+    
+    private func copyToAssetFolderResources(sourceURL: URL) {
+        guard let assetsFolderURL = document.assetsFolder?.resolvedURL() else {
+            copyError = "Assets folder not set"
+            return
         }
-
-        // Resolve final destination with collision handling
-        let baseName = src.deletingPathExtension().lastPathComponent
-        let ext = src.pathExtension
-        var dest = folder.appendingPathComponent(src.lastPathComponent)
+        
+        let resourcesFolder = assetsFolderURL.appendingPathComponent("Resources", isDirectory: true)
+        let fm = FileManager.default
+        
+        // Create Resources folder if needed
+        if !fm.fileExists(atPath: resourcesFolder.path) {
+            do {
+                try fm.createDirectory(at: resourcesFolder, withIntermediateDirectories: true, attributes: nil)
+            } catch {
+                copyError = "Failed to create Resources folder: \(error.localizedDescription)"
+                return
+            }
+        }
+        
+        // Copy file with collision handling
+        let baseName = sourceURL.deletingPathExtension().lastPathComponent
+        let ext = sourceURL.pathExtension
+        var dest = resourcesFolder.appendingPathComponent(sourceURL.lastPathComponent)
         var counter = 1
+        
         while fm.fileExists(atPath: dest.path) {
             let candidateName = "\(baseName)_\(counter)" + (ext.isEmpty ? "" : ".\(ext)")
-            dest = folder.appendingPathComponent(candidateName)
+            dest = resourcesFolder.appendingPathComponent(candidateName)
             counter += 1
         }
-
-        // Use copy. If you want move, swap to moveItem.
-        try fm.copyItem(at: src, to: dest)
-
-        // Save copied path as the resource url
-        resource.url = dest.path
-        copySuggestionVisible = false
-    }
-
-    private func projectIdString(_ p: ProjectDoc) -> String {
-        // Prefer an `id` property if present (UUID or String)
-        let mirror = Mirror(reflecting: p)
-        if let idChild = mirror.children.first(where: { $0.label == "id" }) {
-            if let uuidValue = idChild.value as? UUID {
-                return uuidValue.uuidString
-            }
-            if let strValue = idChild.value as? String {
-                return strValue
-            }
+        
+        do {
+            try fm.copyItem(at: sourceURL, to: dest)
+            
+            // Calculate relative path from AssetFolder
+            let relativePath = dest.relativePath(from: assetsFolderURL) ?? "Resources/\(dest.lastPathComponent)"
+            
+            // Update resource with relative path
+            resource.url = relativePath
+            
+            // Set type to filename without extension
+            editableFileName = baseName
+            resource.type = baseName
+            
+        } catch {
+            copyError = "Failed to copy file: \(error.localizedDescription)"
         }
-        // Fallback: descriptive string (should rarely be used)
-        return String(describing: p)
+    }
+    
+    private func handleFileNameChange(_ newName: String) {
+        guard let assetsFolderURL = document.assetsFolder?.resolvedURL(),
+              !resource.url.isEmpty else { return }
+        
+        let currentFileURL = assetsFolderURL.appendingPathComponent(resource.url)
+        guard FileManager.default.fileExists(atPath: currentFileURL.path) else { return }
+        
+        let ext = currentFileURL.pathExtension
+        let newFileName = newName + (ext.isEmpty ? "" : ".\(ext)")
+        let newFileURL = currentFileURL.deletingLastPathComponent().appendingPathComponent(newFileName)
+        
+        do {
+            try FileManager.default.moveItem(at: currentFileURL, to: newFileURL)
+            
+            // Update relative path
+            let relativePath = newFileURL.relativePath(from: assetsFolderURL) ?? "Resources/\(newFileName)"
+            resource.url = relativePath
+            resource.type = newName
+            
+        } catch {
+            copyError = "Failed to rename file: \(error.localizedDescription)"
+        }
+    }
+    
+    private func existingFileURL() -> URL? {
+        guard !resource.url.isEmpty,
+              let assetsFolderURL = document.assetsFolder?.resolvedURL() else { return nil }
+        
+        let fileURL = assetsFolderURL.appendingPathComponent(resource.url)
+        return FileManager.default.fileExists(atPath: fileURL.path) ? fileURL : nil
+    }
+    
+    private func fileExtension() -> String? {
+        if let url = pickedFileURL {
+            let ext = url.pathExtension
+            return ext.isEmpty ? nil : ext
+        }
+        if let url = existingFileURL() {
+            let ext = url.pathExtension
+            return ext.isEmpty ? nil : ext
+        }
+        return nil
+    }
+    
+    @ViewBuilder
+    private func filePreviewCard(url: URL) -> some View {
+        HStack(spacing: 12) {
+            // Icon preview
+            let icon = NSWorkspace.shared.icon(forFile: url.path)
+            let resizedIcon = icon.resized(to: CGSize(width: 48, height: 48))
+            
+            Image(nsImage: resizedIcon)
+                .resizable()
+                .frame(width: 48, height: 48)
+            
+            VStack(alignment: .leading, spacing: 4) {
+                Text(url.lastPathComponent)
+                    .font(.subheadline)
+                    .lineLimit(1)
+                
+                if let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
+                   let size = attrs[.size] as? Int64 {
+                    Text(ByteCountFormatter.string(fromByteCount: size, countStyle: .file))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            
+            Spacer()
+            
+            Button {
+                removeFile()
+            } label: {
+                Image(systemName: "xmark.circle.fill")
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color(NSColor.controlBackgroundColor))
+        )
+    }
+    
+    private func removeFile() {
+        guard let assetsFolderURL = document.assetsFolder?.resolvedURL(),
+              !resource.url.isEmpty else { return }
+        
+        let fileURL = assetsFolderURL.appendingPathComponent(resource.url)
+        
+        do {
+            try FileManager.default.removeItem(at: fileURL)
+            resource.url = ""
+            resource.type = ""
+            editableFileName = ""
+            pickedFileURL = nil
+        } catch {
+            copyError = "Failed to remove file: \(error.localizedDescription)"
+        }
     }
 }
 

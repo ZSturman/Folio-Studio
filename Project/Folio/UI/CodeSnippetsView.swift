@@ -30,6 +30,7 @@ struct CodeSnippetsView: View {
     @Environment(\.modelContext) private var modelContext
     
     var programmingLanguage: ProgrammingLanguage
+    @Binding var selectedSnippetID: CodeSnippetID?
 
     @State private var loadedSnippets: [LoadedCodeSnippet] = []
     @State private var showExportSheet = false
@@ -78,23 +79,34 @@ struct CodeSnippetsView: View {
     
     private var pythonSnippetsView: some View {
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: 24) {
-                headerSection
-
-                ForEach(loadedSnippets) { snippet in
-                    snippetCard(snippet)
-                        .padding()
-                        .background(
-                            RoundedRectangle(cornerRadius: 12)
-                                .fill(Color(NSColor.textBackgroundColor))
-                        )
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 12)
-                                .stroke(Color.primary.opacity(0.08), lineWidth: 1)
-                        )
+            if let selectedID = selectedSnippetID,
+               let snippet = loadedSnippets.first(where: { $0.id == selectedID }) {
+                // Show selected snippet
+                VStack(alignment: .leading, spacing: 24) {
+                    snippetDetailView(snippet)
                 }
+                .padding()
+            } else {
+                // Show overview when no snippet selected
+                VStack(spacing: 24) {
+                    headerSection
+                    
+                    VStack(spacing: 12) {
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: 48))
+                            .foregroundStyle(.tertiary)
+                        Text("Select a Function")
+                            .font(.title3)
+                            .foregroundStyle(.secondary)
+                        Text("Choose a snippet from the sidebar to view code examples")
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                            .multilineTextAlignment(.center)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+                .padding()
             }
-            .padding()
         }
         .navigationTitle("Code Snippets")
         .toolbar {
@@ -113,6 +125,35 @@ struct CodeSnippetsView: View {
         .onChange(of: programmingLanguage) {
             load()
         }
+    }
+    
+    private func snippetDetailView(_ snippet: LoadedCodeSnippet) -> some View {
+        VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(snippet.title)
+                    .font(.title2.bold())
+                    .foregroundColor(.primary)
+
+                Text(snippet.summary)
+                    .font(.body)
+                    .foregroundStyle(.secondary)
+            }
+
+            infoRow(title: "Input", text: snippet.inputDescription)
+            infoRow(title: "Output", text: snippet.outputDescription)
+            infoRow(title: "Notes", text: snippet.notes)
+
+            codeBlock(snippet.code)
+        }
+        .padding()
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color(NSColor.textBackgroundColor))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+        )
     }
     
     // MARK: - Export Sheet
@@ -252,29 +293,9 @@ struct CodeSnippetsView: View {
                     .fill(Color(NSColor.controlBackgroundColor).opacity(0.5))
             )
 
-            Text("Copy-paste-ready examples for working with your Folio documents: loading JSON data, parsing structure, and viewing project metadata.")
+            Text("Select a function from the sidebar to view copy-paste-ready code examples.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
-        }
-    }
-
-    private func snippetCard(_ snippet: LoadedCodeSnippet) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(snippet.title)
-                    .font(.headline)
-                    .foregroundColor(.primary)
-
-                Text(snippet.summary)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-            }
-
-            infoRow(title: "Input", text: snippet.inputDescription)
-            infoRow(title: "Output", text: snippet.outputDescription)
-            infoRow(title: "Notes", text: snippet.notes)
-
-            codeBlock(snippet.code)
         }
     }
 
@@ -510,6 +531,9 @@ struct CodeSnippetsView: View {
 }
 
 #Preview {
-    CodeSnippetsView(programmingLanguage: .python)
-        .modelContainer(for: [ProjectDoc.self], inMemory: true)
+    CodeSnippetsView(
+        programmingLanguage: .python,
+        selectedSnippetID: .constant(.loadSummary)
+    )
+    .modelContainer(for: [ProjectDoc.self], inMemory: true)
 }
