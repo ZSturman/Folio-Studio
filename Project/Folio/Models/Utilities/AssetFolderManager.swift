@@ -15,12 +15,46 @@ class AssetFolderManager {
     
     private init() {}
     
+    /// Prompts the user to choose or create an asset folder with a clear explanation dialog first.
+    func promptForAssetFolderCreation(for document: inout FolioDocument) {
+        // Check if already set
+        if let existing = document.assetsFolder, existing.resolvedURL() != nil {
+            return
+        }
+        
+        let alert = NSAlert()
+        alert.messageText = "Set Up Assets Folder"
+        alert.informativeText = "This document needs a folder to store images and files. Would you like to choose or create one now?"
+        alert.addButton(withTitle: "Choose Folder")
+        alert.addButton(withTitle: "Later")
+        
+        if alert.runModal() == .alertFirstButtonReturn {
+            ensureAssetsFolder(for: &document)
+        }
+    }
+
+    /// Ensures an assets folder is selected for the document (inout version)
+    @discardableResult
+    func ensureAssetsFolder(for document: inout FolioDocument) -> URL? {
+        return _ensureAssetsFolder(
+            assetsFolder: &document.assetsFolder,
+            documentWrapper: document.documentWrapper
+        )
+    }
+
     /// Ensures an assets folder is selected for the document, with clear UX messaging
     /// and write permission validation. Only prompts if folder is not set or inaccessible.
     @discardableResult
     func ensureAssetsFolder(for document: Binding<FolioDocument>) -> URL? {
+        return _ensureAssetsFolder(
+            assetsFolder: &document.wrappedValue.assetsFolder,
+            documentWrapper: document.wrappedValue.documentWrapper
+        )
+    }
+    
+    private func _ensureAssetsFolder(assetsFolder: inout AssetsFolderLocation?, documentWrapper: FileWrapper?) -> URL? {
         // First, try to resolve existing assets folder
-        if let existing = document.wrappedValue.assetsFolder,
+        if let existing = assetsFolder,
            let resolvedURL = existing.resolvedURL() {
             // Folder is already set and accessible
             return resolvedURL
@@ -37,7 +71,7 @@ class AssetFolderManager {
         panel.allowsMultipleSelection = false
         
         // If we have a previously stored path (even if bookmark failed), use it as hint
-        if let existing = document.wrappedValue.assetsFolder,
+        if let existing = assetsFolder,
            let path = existing.path {
             panel.directoryURL = URL(fileURLWithPath: path)
         }
@@ -59,14 +93,14 @@ class AssetFolderManager {
                     try BookmarkManager.shared.store(
                         bookmark: bookmarkData,
                         forPath: url.path,
-                        in: document.wrappedValue.documentWrapper
+                        in: documentWrapper
                     )
                     
-                    document.wrappedValue.assetsFolder = location
+                    assetsFolder = location
                     return url
                 } catch {
                     print("[AssetFolderManager] Failed to store bookmark: \(error)")
-                    document.wrappedValue.assetsFolder = location
+                    assetsFolder = location
                     return url
                 }
             } else {

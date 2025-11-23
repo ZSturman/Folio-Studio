@@ -29,7 +29,11 @@ enum DocumentActions {
         panel.canCreateDirectories = true
         panel.nameFieldStringValue = "New Project.folio"
         if panel.runModal() == .OK, let url = panel.url {
-            let doc = FolioDocument()
+            var doc = FolioDocument()
+            
+            // Prompt for asset folder immediately
+            AssetFolderManager.shared.promptForAssetFolderCreation(for: &doc)
+            
             do {
                 let data = try JSONEncoder().encode(doc)
                 try data.write(to: url, options: [.atomic])

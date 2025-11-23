@@ -33,7 +33,7 @@ struct CollectionSidebarNew: View {
             )) {
                 Section {
                     Button {
-                        viewModel.createCollection()
+                        viewModel.createCollection(document: $document)
                     } label: {
                         Label("New Collection", systemImage: "plus")
                     }

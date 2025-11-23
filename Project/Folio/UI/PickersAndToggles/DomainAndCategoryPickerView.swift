@@ -61,62 +61,61 @@ struct DomainCategoryPickerView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Domain & Category")
-                .font(.headline)
+            // Domain
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Domain")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
 
-            HStack(alignment: .firstTextBaseline, spacing: 24) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Domain")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-
-                    HStack(spacing: 8) {
-                        Picker("", selection: selectedDomainBinding) {
-                            Text("None").tag(nil as ProjectDomain?)
-                            ForEach(domains, id: \.id) { d in
-                                Text(d.name).tag(d as ProjectDomain?)
-                            }
+                HStack(spacing: 8) {
+                    Picker("", selection: selectedDomainBinding) {
+                        Text("None").tag(nil as ProjectDomain?)
+                        ForEach(domains, id: \.id) { d in
+                            Text(d.name).tag(d as ProjectDomain?)
                         }
-                        .pickerStyle(.menu)
-                        .controlSize(.large)
-                        .frame(minWidth: 180, alignment: .leading)
-
-                        Button {
-                            newDomainName = ""
-                            showAddDomainSheet = true
-                        } label: {
-                            Image(systemName: "plus")
-                        }
-                        .help("Add Domain")
                     }
+                    .pickerStyle(.menu)
+                    .labelsHidden()
+                    .frame(maxWidth: .infinity)
+
+                    Button {
+                        newDomainName = ""
+                        showAddDomainSheet = true
+                    } label: {
+                        Image(systemName: "plus")
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Add Domain")
                 }
+            }
 
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Category")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+            // Category
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Category")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
 
-                    HStack(spacing: 8) {
-                        Picker("", selection: selectedCategoryBinding) {
-                            Text("None").tag(nil as ProjectCategory?)
-                            ForEach(categoriesForSelectedDomain, id: \.id) { c in
-                                Text(c.name).tag(c as ProjectCategory?)
-                            }
+                HStack(spacing: 8) {
+                    Picker("", selection: selectedCategoryBinding) {
+                        Text("None").tag(nil as ProjectCategory?)
+                        ForEach(categoriesForSelectedDomain, id: \.id) { c in
+                            Text(c.name).tag(c as ProjectCategory?)
                         }
-                        .pickerStyle(.menu)
-                        .controlSize(.large)
-                        .frame(minWidth: 180, alignment: .leading)
-                        .disabled(selectedDomainBinding.wrappedValue == nil)
-
-                        Button {
-                            newCategoryName = ""
-                            showAddCategorySheet = true
-                        } label: {
-                            Image(systemName: "plus")
-                        }
-                        .help("Add Category")
-                        .disabled(selectedDomainBinding.wrappedValue == nil)
                     }
+                    .pickerStyle(.menu)
+                    .labelsHidden()
+                    .frame(maxWidth: .infinity)
+                    .disabled(selectedDomainBinding.wrappedValue == nil)
+
+                    Button {
+                        newCategoryName = ""
+                        showAddCategorySheet = true
+                    } label: {
+                        Image(systemName: "plus")
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Add Category")
+                    .disabled(selectedDomainBinding.wrappedValue == nil)
                 }
             }
         }

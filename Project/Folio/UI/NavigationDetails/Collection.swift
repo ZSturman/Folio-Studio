@@ -26,7 +26,7 @@ struct CollectionTabView: View {
         }
         .alert("Delete collection?", isPresented: $showDeleteCollectionAlert) {
             Button("Delete", role: .destructive) {
-                viewModel.deleteCollection()
+                viewModel.deleteCollection(document: $document)
             }
             Button("Cancel", role: .cancel) { }
         } message: {
@@ -44,7 +44,7 @@ struct CollectionTabView: View {
                     TextField("Collection Name", text: Binding(
                         get: { collectionName },
                         set: { newName in
-                            viewModel.renameCollection(to: newName)
+                            viewModel.renameCollection(to: newName, document: $document)
                         }
                     ))
                     .font(.title2)
@@ -65,7 +65,7 @@ struct CollectionTabView: View {
                     // Action buttons
                     HStack {
                         Button {
-                            viewModel.addItem()
+                            viewModel.addItem(document: $document)
                         } label: {
                             Label("Add Item", systemImage: "plus")
                         }
@@ -97,6 +97,7 @@ struct CollectionTabView: View {
                                 ForEach(section.items) { item in
                                     CollectionItemCard(
                                         item: item,
+                                        document: document,
                                         isSelected: viewModel.selectedItemId == item.id,
                                         onSelect: {
                                             viewModel.selectItem(id: item.id)
@@ -141,14 +142,14 @@ struct CollectionTabView: View {
                         document.collection[collectionName]?.images[label.storageKey]
                     },
                     set: { newValue in
-                        viewModel.updateCollectionImage(key: label.storageKey, assetPath: newValue)
+                        viewModel.updateCollectionImage(key: label.storageKey, assetPath: newValue, document: $document)
                     }
                 ),
                 document: $document,
                 labelPrefix: Binding<String>(
                     get: { collectionName },
                     set: { newValue in
-                        viewModel.renameCollection(to: newValue)
+                        viewModel.renameCollection(to: newValue, document: $document)
                     }
                 )
             )
@@ -162,6 +163,7 @@ struct CollectionTabView: View {
 
 struct CollectionItemCard: View {
     let item: JSONCollectionItem
+    let document: FolioDocument
     let isSelected: Bool
     let onSelect: () -> Void
     
@@ -224,11 +226,16 @@ struct CollectionItemCard: View {
     }
     
     private func thumbnailURL(for item: JSONCollectionItem) -> URL? {
-        if !(item.thumbnail.pathToEdited?.isEmpty ?? true) {
-            return URL(fileURLWithPath: item.thumbnail.pathToEdited ?? "")
+        // Check new path property first
+        if !item.thumbnail.path.isEmpty, let assetsURL = document.assetsFolder?.resolvedURL() {
+            return assetsURL.appendingPathComponent(item.thumbnail.path)
         }
-        if !(item.thumbnail.pathToOriginal?.isEmpty ?? true) {
-            return URL(fileURLWithPath: item.thumbnail.pathToOriginal ?? "")
+        // Fallback to legacy properties
+        if let edited = item.thumbnail.pathToEdited, !edited.isEmpty {
+            return URL(fileURLWithPath: edited)
+        }
+        if let original = item.thumbnail.pathToOriginal, !original.isEmpty {
+            return URL(fileURLWithPath: original)
         }
         return nil
     }

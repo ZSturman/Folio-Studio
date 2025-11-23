@@ -32,45 +32,20 @@ struct MediaDetailView: View {
         !isCustomSelectedLabel
     }
 
-    private var canShowCopyOriginalButton: Bool {
-        guard let current = jsonImage,
-              !(current.pathToOriginal?.isEmpty ?? true),
-              !(current.pathToEdited?.isEmpty ?? true),
-              let loc = document.assetsFolder,
-              let root = loc.resolvedURL()
-        else {
-            return false
-        }
-
-        let originalURL = URL(fileURLWithPath: current.pathToOriginal ?? "")
-        let editedURL = URL(fileURLWithPath: current.pathToEdited ?? "")
-        
-        // Don't show if paths are the same
-        if originalURL.standardizedFileURL.path == editedURL.standardizedFileURL.path {
-            return false
-        }
-
-        let sourceImagesFolder = root.appendingPathComponent("SourceImages", isDirectory: true)
-        let destURL = uniqueURL(in: sourceImagesFolder, for: originalURL.lastPathComponent)
-
-        return destURL.standardizedFileURL.path != originalURL.standardizedFileURL.path
-    }
-
     private func setJsonImage(_ newValue: AssetPath?) {
         document.images[selectedImageLabel] = newValue
     }
 
     private func removeImage() {
-        if let editedPath = jsonImage?.pathToEdited, !editedPath.isEmpty {
-            let editedURL = URL(fileURLWithPath: editedPath)
-            if FileManager.default.fileExists(atPath: editedURL.path) {
-                do {
-                    try FileManager.default.removeItem(at: editedURL)
-                } catch {
-                    errorMessage = "Failed to delete edited image: \(error.localizedDescription)"
-                }
-            }
+        guard let assetPath = jsonImage,
+              let assetsFolderURL = document.assetsFolder?.resolvedURL() else {
+            setJsonImage(nil)
+            return
         }
+        
+        // Use ImageImportService to handle deletion
+        ImageImportService.deleteImage(assetPath: assetPath, assetsFolderURL: assetsFolderURL)
+        
         setJsonImage(nil)
         
         if document.images[selectedImageLabel] == nil {
@@ -82,94 +57,38 @@ struct MediaDetailView: View {
         }
     }
 
-    private func copyOriginalToFolder() {
-        guard var current = jsonImage,
-              let loc = document.assetsFolder,
-              let root = loc.resolvedURL()
-        else { return }
-
-        let originalURL = URL(fileURLWithPath: current.pathToOriginal ?? "")
-
-        let sourceImagesFolder = root.appendingPathComponent("SourceImages", isDirectory: true)
-        do {
-            try FileManager.default.createDirectory(
-                at: sourceImagesFolder,
-                withIntermediateDirectories: true
-            )
-        } catch {
-            // You can log this error if desired
-            return
-        }
-
-        let destURL = uniqueURL(in: sourceImagesFolder, for: originalURL.lastPathComponent)
-        do {
-            if originalURL.standardizedFileURL != destURL.standardizedFileURL {
-                try FileManager.default.copyItem(at: originalURL, to: destURL)
-            }
-            current.pathToOriginal = destURL.path
-            setJsonImage(current)
-        } catch {
-            // You can log this error if desired
-        }
-    }
-
-    private func uniqueURL(in folder: URL, for filename: String) -> URL {
-        var candidate = folder.appendingPathComponent(filename)
-        let ext = candidate.pathExtension
-        let base = candidate.deletingPathExtension().lastPathComponent
-        var index = 1
-
-        while FileManager.default.fileExists(atPath: candidate.path) {
-            let newName = "\(base) copy" + (index == 1 ? "" : " \(index)") + (ext.isEmpty ? "" : ".\(ext)")
-            candidate = folder.appendingPathComponent(newName)
-            index += 1
-        }
-        return candidate
-    }
-
     private var isCurrentAssetEmpty: Bool {
         guard let asset = jsonImage else { return true }
-        return (asset.pathToOriginal?.isEmpty ?? true) && (asset.pathToEdited?.isEmpty ?? true)
+        // Check if we have an original in app data
+        return ImageAssetManager.shared.loadOriginal(id: asset.id) == nil
     }
     
     private func clearImageButKeepKey() {
-        guard var current = jsonImage else { return }
-        
-        if let editedPath = jsonImage?.pathToEdited, !editedPath.isEmpty {
-            let editedURL = URL(fileURLWithPath: editedPath)
-            if FileManager.default.fileExists(atPath: editedURL.path) {
-                do {
-                    try FileManager.default.removeItem(at: editedURL)
-                } catch {
-                    errorMessage = "Failed to delete edited image: \(error.localizedDescription)"
-                }
-            }
+        guard let assetPath = jsonImage,
+              let assetsFolderURL = document.assetsFolder?.resolvedURL() else {
+            imageEditorViewModel.removeImage()
+            return
         }
         
-        current.pathToOriginal = ""
-        current.pathToEdited = ""
-        setJsonImage(current)
+        // Delete the image using ImageImportService
+        ImageImportService.deleteImage(assetPath: assetPath, assetsFolderURL: assetsFolderURL)
+        
+        // Create an empty AssetPath to keep the key
+        setJsonImage(AssetPath())
         imageEditorViewModel.removeImage()
     }
     
     // MARK: - Load Image into Editor
     
     private func loadImageIntoEditor() {
-        guard let assetPath = jsonImage,
-              !(assetPath.pathToOriginal?.isEmpty ?? true) else {
+        guard let assetPath = jsonImage else {
             imageEditorViewModel.removeImage()
             return
         }
         
-        // ALWAYS load from original for non-destructive editing
-        let originalURL = URL(fileURLWithPath: assetPath.pathToOriginal ?? "")
-        
-        // Resolve with permission helper if needed
-        let resolvedURL = PermissionHelper.resolvedURL(forOriginalPath: originalURL.path, from: document.documentWrapper)
-            ?? (PermissionHelper.isReadable(originalURL) ? originalURL : nil)
-        
-        guard let url = resolvedURL,
-              let image = NSImage(contentsOf: url) else {
+        // Load original from app data using UUID
+        guard let image = ImageAssetManager.shared.loadOriginal(id: assetPath.id) else {
+            imageEditorViewModel.removeImage()
             return
         }
         

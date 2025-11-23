@@ -64,88 +64,83 @@ struct ProjectStatusPickerView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Status & Phase")
-                .font(.headline)
+            // Status
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Status")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
 
-            HStack(alignment: .firstTextBaseline, spacing: 24) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Status")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-
-                    HStack(spacing: 8) {
-                        Picker("", selection: selectedStatusBinding) {
-                            Text("None").tag(nil as ProjectStatus?)
-                            ForEach(statuses, id: \.id) { s in
-                                Text(s.name).tag(s as ProjectStatus?)
-                            }
+                HStack(spacing: 8) {
+                    Picker("", selection: selectedStatusBinding) {
+                        Text("None").tag(nil as ProjectStatus?)
+                        ForEach(statuses, id: \.id) { s in
+                            Text(s.name).tag(s as ProjectStatus?)
                         }
-                        .pickerStyle(.menu)
-                        .controlSize(.large)
-                        .frame(minWidth: 180, alignment: .leading)
-
-                        Button {
-                            newStatusName = ""
-                            showAddStatusSheet = true
-                        } label: {
-                            Image(systemName: "plus")
-                        }
-                        .help("Add Status")
                     }
+                    .pickerStyle(.menu)
+                    .labelsHidden()
+                    .frame(maxWidth: .infinity)
+
+                    Button {
+                        newStatusName = ""
+                        showAddStatusSheet = true
+                    } label: {
+                        Image(systemName: "plus")
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Add Status")
                 }
+            }
 
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Phase")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+            // Phase
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Phase")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
 
-                    HStack(spacing: 8) {
-                        Picker("", selection: selectedPhaseBinding) {
-                            Text("None").tag(nil as ProjectStatusPhase?)
-                            ForEach(phasesForSelectedStatus, id: \.id) { p in
-                                Text(p.name).tag(p as ProjectStatusPhase?)
-                            }
+                HStack(spacing: 8) {
+                    Picker("", selection: selectedPhaseBinding) {
+                        Text("None").tag(nil as ProjectStatusPhase?)
+                        ForEach(phasesForSelectedStatus, id: \.id) { p in
+                            Text(p.name).tag(p as ProjectStatusPhase?)
                         }
-                        .pickerStyle(.menu)
-                        .controlSize(.large)
-                        .frame(minWidth: 180, alignment: .leading)
-                        .disabled(selectedStatusBinding.wrappedValue == nil)
-
-                        Button {
-                            newPhaseName = ""
-                            showAddPhaseSheet = true
-                        } label: {
-                            Image(systemName: "plus")
-                        }
-                        .help("Add Phase for selected Status")
-                        .disabled(selectedStatusBinding.wrappedValue == nil)
                     }
+                    .pickerStyle(.menu)
+                    .labelsHidden()
+                    .frame(maxWidth: .infinity)
+                    .disabled(selectedStatusBinding.wrappedValue == nil)
+
+                    Button {
+                        newPhaseName = ""
+                        showAddPhaseSheet = true
+                    } label: {
+                        Image(systemName: "plus")
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Add Phase")
+                    .disabled(selectedStatusBinding.wrappedValue == nil)
                 }
             }
         }
         .padding(.vertical, 4)
         .onChange(of: document.status) { _, newValue in
             Task {
-                if let v = newValue {
-                    let r = sdc.enqueueStatusChange(v, for: document.id)
-                    if case .failure(let e) = r { print("[StatusFieldView] enqueueStatusChange error: \(e)") }
-                }
+                let r = sdc.enqueueStatusChange(newValue ?? "", for: document.id)
+                if case .failure(let e) = r { print("[StatusFieldView] enqueueStatusChange error: \(e)") }
             }
         }
         .onChange(of: document.phase) { _, newValue in
             Task {
-                if let p = newValue {
-                    let r = sdc.enqueueStatusPhaseChange(p, for: document.id)
-                    if case .failure(let e) = r { print("[PhaseFieldView] enqueueStatusPhaseChange error: \(e)") }
-                }
+                let r = sdc.enqueueStatusPhaseChange(newValue ?? "", for: document.id)
+                if case .failure(let e) = r { print("[PhaseFieldView] enqueueStatusPhaseChange error: \(e)") }
             }
         }
 
-        // Add Status sheet
+        // Sheets
         .sheet(isPresented: $showAddStatusSheet) {
             AddNameSheet(
                 title: "New Status",
-                placeholder: "e.g. In Progress",
+                placeholder: "e.g. Active",
                 name: $newStatusName,
                 contextView: { EmptyView() },
                 onCancel: { newStatusName = "" },
@@ -154,13 +149,12 @@ struct ProjectStatusPickerView: View {
                     newStatusName = ""
                 }
             )
-            .presentationDetents([.medium])
         }
 
         .sheet(isPresented: $showAddPhaseSheet) {
             AddNameSheet(
                 title: "New Phase",
-                placeholder: "e.g. Design",
+                placeholder: "e.g. Alpha",
                 name: $newPhaseName,
                 contextView: {
                     VStack(alignment: .leading, spacing: 6) {
@@ -173,7 +167,6 @@ struct ProjectStatusPickerView: View {
                     newPhaseName = ""
                 }
             )
-            .presentationDetents([.medium])
         }
     }
 

@@ -34,8 +34,10 @@ struct ContentView: View {
     @StateObject private var collectionViewModel: CollectionViewModel
     @State private var selectedImageLabel: ImageLabel = .thumbnail
     @State private var jsonString: String = ""
+    @State private var jsonData: Data?
     @State private var jsonError: String?
     @State private var showAssetFolderPrompt: Bool = false
+    @State private var jsonDebounceTask: Task<Void, Never>?
     
     var fileURL: URL?
     
@@ -43,8 +45,6 @@ struct ContentView: View {
         self._document = document
         self.fileURL = fileURL
         self._collectionViewModel = StateObject(wrappedValue: CollectionViewModel(
-            document: document,
-            assetsFolder: document.wrappedValue.resolvedAssetsFolderURL(),
             undoManager: nil
         ))
     }
@@ -96,7 +96,7 @@ struct ContentView: View {
                 .padding()
                 
                 jsonPanel
-                    .frame(height: jsonPanelCollapsed ? 30 : max(100, min(800, jsonPanelHeight)))
+                    .frame(height: jsonPanelCollapsed ? 30 : max(100, min(1200, jsonPanelHeight)))
             }
             .inspector(isPresented: $inspectorState.isVisible) {
                 Group {
@@ -152,9 +152,16 @@ struct ContentView: View {
             }
             .frame(minHeight: 400)
         }
-        .onChange(of: document) { 
-            // Keep ViewModel in sync with latest document binding
-            collectionViewModel.updateBinding($document)
+        .onChange(of: document) { _, _ in
+            // Auto-reload JSON with debounce
+            guard !jsonPanelCollapsed else { return }
+            jsonDebounceTask?.cancel()
+            jsonDebounceTask = Task {
+                try? await Task.sleep(for: .seconds(1))
+                if !Task.isCancelled {
+                    generateJSON()
+                }
+            }
         }
         .onAppear {
             sdc.bind(using: modelContext)
@@ -165,7 +172,6 @@ struct ContentView: View {
             
             // Proactively validate assets folder
             validateAssetsFolderOnOpen()
-            collectionViewModel.updateBinding($document)
         }
         .task(id: fileURL) {
             guard let url = fileURL else { return }
@@ -284,13 +290,7 @@ struct ContentView: View {
                         .padding()
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
-                    ScrollView([.horizontal, .vertical]) {
-                        Text(jsonString)
-                            .font(.system(.body, design: .monospaced))
-                            .textSelection(.enabled)
-                            .padding()
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
+                    JSONTreeView(data: jsonData ?? Data())
                 }
             }
         }
@@ -302,6 +302,7 @@ struct ContentView: View {
         
         do {
             let data = try encoder.encode(document)
+            jsonData = data
             if let string = String(data: data, encoding: .utf8) {
                 jsonString = string
                 jsonError = nil

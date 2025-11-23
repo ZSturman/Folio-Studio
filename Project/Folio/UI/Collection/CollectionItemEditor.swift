@@ -330,16 +330,7 @@ struct CollectionItemEditor: View {
                             LabeledContent("Edited") { Text(fp.pathToEdited ?? "").font(.footnote).textSelection(.enabled) }
                         }
                         
-                        HStack {
-                            Button {
-                                copyOriginalIntoAssets()
-                            } label: {
-                                Label("Copy to assets folder", systemImage: "arrow.down.doc")
-                            }
-                            .disabled(item.label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || (item.filePath?.pathToOriginal ?? "").isEmpty)
-                            
-                            Spacer()
-                        }
+                        // Auto-copy happens on selection now
                     case .urlLink:
                         VStack(alignment: .leading, spacing: 6) {
                             TextField("https://example.com", text: urlBinding)
@@ -465,12 +456,20 @@ struct CollectionItemEditor: View {
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = false
         if panel.runModal() == .OK, let url = panel.url {
+            // Auto-set label if empty
+            if item.label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                item.label = url.deletingPathExtension().lastPathComponent
+            }
+            
             var fp = item.filePath ?? AssetPath()
             fp.pathToOriginal = url.path
             fp.pathToEdited = ""
             item.filePath = fp
             item.type = .file
             item.url = nil
+            
+            // Auto-copy to assets immediately
+            copyOriginalIntoAssets()
         }
     }
 

@@ -74,24 +74,46 @@ struct ImageSlotView: View {
     
     private var editedURLIfExists: URL? {
         _ = permissionRefreshToken
-        guard let p = jsonImage?.pathToEdited,
-              !p.isEmpty,
-              FileManager.default.fileExists(atPath: p)
-        else { return nil }
-        return URL(fileURLWithPath: p)
+        guard let assetPath = jsonImage, !assetPath.path.isEmpty else { return nil }
+        
+        // Resolve using assetsFolder + relative path
+        guard let assetsFolderURL = document.assetsFolder?.resolvedURL() else {
+            // Fallback to legacy pathToEdited for backwards compatibility
+            if let legacyPath = assetPath.pathToEdited, !legacyPath.isEmpty,
+               FileManager.default.fileExists(atPath: legacyPath) {
+                return URL(fileURLWithPath: legacyPath)
+            }
+            return nil
+        }
+        
+        let fullURL = assetsFolderURL.appendingPathComponent(assetPath.path)
+        guard FileManager.default.fileExists(atPath: fullURL.path) else { return nil }
+        return fullURL
     }
     
     private var editedPathValue: String? {
-        guard let p = jsonImage?.pathToEdited, !p.isEmpty else { return nil }
-        return p
+        guard let assetPath = jsonImage else { return nil }
+        
+        // Return relative path if available, otherwise legacy path
+        if !assetPath.path.isEmpty {
+            return assetPath.path
+        }
+        if let legacyPath = assetPath.pathToEdited, !legacyPath.isEmpty {
+            return legacyPath
+        }
+        return nil
     }
     
     private var originalURLIfExists: URL? {
-        guard let p = jsonImage?.pathToOriginal,
-              !p.isEmpty,
-              FileManager.default.fileExists(atPath: p)
-        else { return nil }
-        return URL(fileURLWithPath: p)
+        // Original images are now stored in app data by UUID
+        // This is only used for legacy support
+        guard let assetPath = jsonImage,
+              let legacyPath = assetPath.pathToOriginal,
+              !legacyPath.isEmpty,
+              FileManager.default.fileExists(atPath: legacyPath) else {
+            return nil
+        }
+        return URL(fileURLWithPath: legacyPath)
     }
     
     // MARK: - Body
@@ -279,234 +301,67 @@ struct ImageSlotView: View {
     }
     
     private func handlePickedSource(_ sourceURL: URL) {
-        guard ensureAssetsFolder(),
-              let loc = document.assetsFolder,
-              let editedRoot = loc.resolvedURL() else {
+        guard ensureAssetsFolder() else {
             errorMessage = "Select an assets folder first."
             return
         }
         
-        // Ensure originals live under assetsRoot/SourceImages
-        let sourceImagesFolder = editedRoot.appendingPathComponent("SourceImages", isDirectory: true)
-        do {
-            try FileManager.default.createDirectory(
-                at: sourceImagesFolder,
-                withIntermediateDirectories: true
-            )
-        } catch {
-            errorMessage = "Failed to prepare SourceImages folder: \(error.localizedDescription)"
-            return
-        }
+        // Use ImageImportService to handle the import
+        let result = ImageImportService.importImage(
+            label: label,
+            sourceURL: sourceURL,
+            document: $document,
+            customAspect: nil
+        )
         
-        let originalDest = uniqueURL(in: sourceImagesFolder, for: sourceURL.lastPathComponent)
-        do {
-            if originalDest.standardizedFileURL != sourceURL.standardizedFileURL {
-                try FileManager.default.copyItem(at: sourceURL, to: originalDest)
-            }
-            
-            let editedDest = uniqueURL(in: editedRoot, for: suggestedEditedFilename(from: sourceURL))
-            
-            if let srcImage = NSImage(contentsOf: originalDest) {
-                let computedAspect: CGSize
-                if case .custom = label {
-                    computedAspect = srcImage.size
-                } else {
-                    computedAspect = label.targetAspect(using: srcImage)
-                }
-                let maxPixels = label.preferredMaxPixels
-                let opts = CoverRenderOptions(
-                    targetAspect: computedAspect,
-                    targetMaxPixels: maxPixels,
-                    output: .jpeg(0.95),
-                    enforceCover: true
-                )
-                if let rendered = CoverRender.renderCover(nsImage: srcImage, options: opts) {
-                    let tmp = editedDest.deletingLastPathComponent()
-                        .appendingPathComponent(".tmp-\(UUID().uuidString)")
-                        .appendingPathExtension(editedDest.pathExtension)
-                    try rendered.writeJPEG(to: tmp, quality: 0.95)
-                    try SafeFileWriter.atomicReplaceFile(at: editedDest, from: tmp)
-                } else {
-                    try FileManager.default.copyItem(at: originalDest, to: editedDest)
-                }
-            } else {
-                let editedDest = uniqueURL(
-                    in: editedRoot,
-                    for: suggestedEditedFilename(from: sourceURL)
-                )
-                try FileManager.default.copyItem(at: originalDest, to: editedDest)
-                jsonImage = AssetPath(
-                    pathToOriginal: originalDest.path,
-                    pathToEdited: editedDest.path
-                )
-                errorMessage = nil
-                return
-            }
-            
-            jsonImage = AssetPath(
-                pathToOriginal: originalDest.path,
-                pathToEdited: editedDest.path
-            )
+        if let error = result.error {
+            errorMessage = error
+        } else {
+            jsonImage = result.assetPath
             errorMessage = nil
-        } catch {
-            let nsError = error as NSError
-            // Check if this is a permission error
-            if nsError.domain == NSCocoaErrorDomain && 
-               (nsError.code == NSFileWriteNoPermissionError || 
-                nsError.code == NSFileReadNoPermissionError) {
-                errorMessage = "Permission denied. Please grant access to the assets folder."
-                handlePermissionError(for: editedRoot)
-            } else {
-                errorMessage = "Copy to edited folder failed: \(error.localizedDescription)"
-            }
         }
     }
     
     // MARK: - Relink / reuse
     
     private func relinkEdited() {
-        guard jsonImage != nil else { return }
+        guard let assetPath = jsonImage else { return }
         
-        let panel = NSOpenPanel()
-        panel.allowsMultipleSelection = false
-        panel.canChooseDirectories = false
-        panel.canChooseFiles = true
-        panel.allowedContentTypes = [.image]
+        let result = ImageImportService.relinkEdited(assetPath: assetPath, document: document)
         
-        if let p = jsonImage?.pathToEdited, !p.isEmpty {
-            panel.directoryURL = URL(fileURLWithPath: p).deletingLastPathComponent()
-        } else if let o = jsonImage?.pathToOriginal, !o.isEmpty {
-            panel.directoryURL = URL(fileURLWithPath: o).deletingLastPathComponent()
-        } else if let loc = document.assetsFolder,
-                  let root = loc.resolvedURL() {
-            panel.directoryURL = root
-        }
-        
-        if panel.runModal() == .OK, let url = panel.url {
-            guard let loc = document.assetsFolder,
-                  let root = loc.resolvedURL() else {
-                errorMessage = "Select an edited images folder first."
-                return
-            }
-            
-            let destURL: URL
-            if url.standardizedFileURL.path.hasPrefix(root.standardizedFileURL.path) {
-                destURL = url
-            } else {
-                destURL = uniqueURL(in: root, for: url.lastPathComponent)
-                do {
-                    try FileManager.default.copyItem(at: url, to: destURL)
-                } catch {
-                    let nsError = error as NSError
-                    // Check if this is a permission error
-                    if nsError.domain == NSCocoaErrorDomain && 
-                       (nsError.code == NSFileWriteNoPermissionError || 
-                        nsError.code == NSFileReadNoPermissionError) {
-                        errorMessage = "Permission denied. Please grant access to the assets folder."
-                        handlePermissionError(for: root)
-                    } else {
-                        errorMessage = "Copy to edited folder failed: \(error.localizedDescription)"
-                    }
-                    return
-                }
-            }
-            
-            var current = jsonImage!
-            current.pathToEdited = destURL.path
-            jsonImage = current
+        if let error = result.error {
+            errorMessage = error
+        } else {
+            jsonImage = result.assetPath
             errorMessage = nil
         }
     }
     
     private func useOriginalAsEdited() {
-        guard var current = jsonImage,
-              let loc = document.assetsFolder,
-              let root = loc.resolvedURL(),
-              let originalURL = originalURLIfExists
-        else {
-            errorMessage = "Original not available."
-            return
-        }
-        
-        let destURL = uniqueURL(in: root, for: suggestedEditedFilename(from: originalURL))
-        do {
-            try FileManager.default.copyItem(at: originalURL, to: destURL)
-            current.pathToEdited = destURL.path
-            jsonImage = current
-            errorMessage = nil
-        } catch {
-            errorMessage = "Failed to save edited from original: \(error.localizedDescription)"
-        }
+        // This functionality is now handled in the Media tab via revert to original
+        // For ImageSlotView in BasicInfo/Collection tabs, users should re-import
+        errorMessage = "Use the Media tab to revert to the original image."
     }
     
     // MARK: - Remove
     
     private func removeImage() {
-        if let editedPath = jsonImage?.pathToEdited, !editedPath.isEmpty {
-            let editedURL = URL(fileURLWithPath: editedPath)
-            if FileManager.default.fileExists(atPath: editedURL.path) {
-                do {
-                    try FileManager.default.removeItem(at: editedURL)
-                } catch {
-                    errorMessage = "Failed to delete edited image: \(error.localizedDescription)"
-                }
-            }
-        }
-        jsonImage = nil
-    }
-    
-    // MARK: - Helpers
-    
-    private func suggestedEditedFilename(from source: URL) -> String {
-        let ext = source.pathExtension.isEmpty ? "png" : source.pathExtension.lowercased()
-        return "\(label.filenameBase).\(ext)"
-    }
-    
-    private func uniqueURL(in folder: URL, for filename: String) -> URL {
-        var candidate = folder.appendingPathComponent(filename)
-        let ext = candidate.pathExtension
-        let base = candidate.deletingPathExtension().lastPathComponent
-        var index = 1
-        
-        while FileManager.default.fileExists(atPath: candidate.path) {
-            let newName = "\(base) copy" + (index == 1 ? "" : " \(index)") + (ext.isEmpty ? "" : ".\(ext)")
-            candidate = folder.appendingPathComponent(newName)
-            index += 1
-        }
-        return candidate
-    }
-    
-    private func copyOriginalToFolder() {
-        guard var current = jsonImage,
-              let loc = document.assetsFolder,
-              let root = loc.resolvedURL()
-        else { return }
-        
-        let originalURL = URL(fileURLWithPath: current.pathToOriginal ?? "")
-        
-        let sourceImagesFolder = root.appendingPathComponent("SourceImages", isDirectory: true)
-        do {
-            try FileManager.default.createDirectory(
-                at: sourceImagesFolder,
-                withIntermediateDirectories: true
-            )
-        } catch {
-            errorMessage = "Failed to prepare SourceImages folder: \(error.localizedDescription)"
+        guard let assetPath = jsonImage,
+              let assetsFolderURL = document.assetsFolder?.resolvedURL() else {
+            jsonImage = nil
             return
         }
         
-        let destURL = uniqueURL(in: sourceImagesFolder, for: originalURL.lastPathComponent)
-        do {
-            if originalURL.standardizedFileURL != destURL.standardizedFileURL {
-                try FileManager.default.copyItem(at: originalURL, to: destURL)
-            }
-            current.pathToOriginal = destURL.path
-            jsonImage = current
-            errorMessage = nil
-        } catch {
-            errorMessage = "Copy failed: \(error.localizedDescription)"
+        // Use ImageImportService to handle deletion
+        if let error = ImageImportService.deleteImage(assetPath: assetPath, assetsFolderURL: assetsFolderURL) {
+            errorMessage = error
         }
+        
+        jsonImage = nil
+        errorMessage = nil
     }
+    
+    // MARK: - Permission Helpers
     
     // MARK: - Deprecated: Standalone editor removed
     // Image editing now happens in the Media tab with the inspector panel.

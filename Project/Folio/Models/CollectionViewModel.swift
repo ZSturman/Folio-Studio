@@ -8,9 +8,9 @@
 import SwiftUI
 import Combine
 
-/// ViewModel for managing Collection and CollectionItem state and mutations.
-/// Eliminates "Publishing changes from within view updates" by handling all
-/// document mutations through explicit methods outside of view update cycles.
+/// ViewModel for managing Collection selection state.
+/// Document mutations are handled via methods that take a Binding<FolioDocument>,
+/// ensuring we always operate on the source of truth.
 @MainActor
 class CollectionViewModel: ObservableObject {
     // MARK: - Published State
@@ -24,113 +24,38 @@ class CollectionViewModel: ObservableObject {
     /// Whether the inspector panel should be visible
     @Published var showInspector: Bool = false
     
-    // MARK: - Private State
-    
-    /// Reference to the document binding for mutations
-    private var documentBinding: Binding<FolioDocument>
-    
-    /// Assets folder URL for file operations
-    private var assetsFolder: URL?
-    
     /// Undo manager for registering undoable actions
     var undoManager: UndoManager?
     
     // MARK: - Initialization
     
-    init(document: Binding<FolioDocument>, assetsFolder: URL?, undoManager: UndoManager?) {
-        self.documentBinding = document
-        self.assetsFolder = assetsFolder
+    init(undoManager: UndoManager?) {
         self.undoManager = undoManager
     }
     
-    // MARK: - Binding Updates
+    // MARK: - Helpers
     
-    /// Updates the document binding and assets folder from the parent view
-    /// This is crucial because StateObject holds the initial binding captured at creation time,
-    /// which becomes stale if the parent view is recreated with a new binding.
-    func updateBinding(_ document: Binding<FolioDocument>) {
-        self.documentBinding = document
-        self.assetsFolder = document.wrappedValue.resolvedAssetsFolderURL()
-    }
-    
-    // MARK: - Private Helpers
-    
-    /// Updates a collection section and triggers SwiftUI change detection
-    /// by replacing the entire document (needed for deep struct mutations)
-    private func updateCollectionSection(_ name: String, with section: CollectionSection) {
-        objectWillChange.send()
-        var updatedDocument = documentBinding.wrappedValue
-        updatedDocument.collection[name] = section
-        updatedDocument.updatedAt = Date() // Update timestamp
-        documentBinding.wrappedValue = updatedDocument
-    }
-    
-    /// Removes a collection and triggers SwiftUI change detection
-    private func removeCollection(_ name: String) {
-        objectWillChange.send()
-        var updatedDocument = documentBinding.wrappedValue
-        updatedDocument.collection.removeValue(forKey: name)
-        updatedDocument.updatedAt = Date() // Update timestamp
-        documentBinding.wrappedValue = updatedDocument
-    }
-    
-    /// Adds a collection and triggers SwiftUI change detection
-    private func addCollection(_ name: String, section: CollectionSection) {
-        objectWillChange.send()
-        var updatedDocument = documentBinding.wrappedValue
-        updatedDocument.collection[name] = section
-        updatedDocument.updatedAt = Date() // Update timestamp
-        documentBinding.wrappedValue = updatedDocument
-    }
-    
-    // MARK: - Computed Properties
-    
-    /// The currently selected collection section
-    var selectedCollection: CollectionSection? {
+    func selectedCollection(in document: FolioDocument) -> CollectionSection? {
         guard let name = selectedCollectionName else { return nil }
-        return documentBinding.wrappedValue.collection[name]
+        return document.collection[name]
     }
     
-    /// The currently selected collection item
-    var selectedItem: JSONCollectionItem? {
-        guard let section = selectedCollection,
-              let itemId = selectedItemId else {
-            print("[CollectionViewModel] ⚠️ selectedItem: no section or itemId")
-            return nil
-        }
-        let item = section.items.first { $0.id == itemId }
-        if let item = item {
-            print("[CollectionViewModel] 🔍 selectedItem returned:")
-            print("  - ID: \(item.id)")
-            print("  - Label: \(item.label)")
-            print("  - Summary: \(item.summary ?? "nil")")
-            print("  - Thumbnail: \(item.thumbnail.path)")
-        } else {
-            print("[CollectionViewModel] ⚠️ selectedItem: item not found with ID \(itemId)")
-        }
-        return item
-    }
-    
-    /// Index of the currently selected item in the items array
-    private var selectedItemIndex: Int? {
-        guard let section = selectedCollection,
+    func selectedItem(in document: FolioDocument) -> JSONCollectionItem? {
+        guard let section = selectedCollection(in: document),
               let itemId = selectedItemId else { return nil }
-        return section.items.firstIndex { $0.id == itemId }
+        return section.items.first { $0.id == itemId }
     }
     
     // MARK: - Collection Management
     
     /// Creates a new collection with a default empty item
-    func createCollection(name: String = "New Collection") {
-        var trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.isEmpty {
-            trimmed = "New Collection"
-        }
+    func createCollection(document: Binding<FolioDocument>) {
+        var trimmed = "New Collection"
         
         // Ensure unique name
         var finalName = trimmed
         var counter = 1
-        while documentBinding.wrappedValue.collection[finalName] != nil {
+        while document.wrappedValue.collection[finalName] != nil {
             finalName = "\(trimmed) \(counter)"
             counter += 1
         }
@@ -138,18 +63,9 @@ class CollectionViewModel: ObservableObject {
         let newItem = JSONCollectionItem(label: "New Item")
         let newSection = CollectionSection(images: [:], items: [newItem])
         
-        // Register undo
-        let oldDocument = documentBinding.wrappedValue
-        undoManager?.registerUndo(withTarget: self) { vm in
-            vm.documentBinding.wrappedValue = oldDocument
-            vm.selectedCollectionName = nil
-            vm.selectedItemId = nil
-        }
-        undoManager?.setActionName("Create Collection")
-        
-        // Mutate document using helper
-        addCollection(finalName, section: newSection)
-        objectWillChange.send()
+        // Mutate document
+        document.wrappedValue.collection[finalName] = newSection
+        document.wrappedValue.updatedAt = Date()
         
         // Select the new collection
         selectedCollectionName = finalName
@@ -157,33 +73,26 @@ class CollectionViewModel: ObservableObject {
         showInspector = false
         
         // Create folder if assets folder exists
-        if let assets = assetsFolder {
+        if let assets = document.wrappedValue.resolvedAssetsFolderURL() {
             _ = try? CollectionFS.ensureCollectionFolder(assetsFolder: assets, name: finalName)
         }
     }
     
     /// Renames the currently selected collection
-    func renameCollection(to newName: String) {
+    func renameCollection(to newName: String, document: Binding<FolioDocument>) {
         guard let oldName = selectedCollectionName else { return }
         
         let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, trimmed != oldName else { return }
         
         // Prevent duplicate names
-        if documentBinding.wrappedValue.collection[trimmed] != nil {
+        if document.wrappedValue.collection[trimmed] != nil {
             return
         }
         
-        guard let section = documentBinding.wrappedValue.collection[oldName] else { return }
+        guard let section = document.wrappedValue.collection[oldName] else { return }
         
-        // Register undo
-        let oldDocument = documentBinding.wrappedValue
-        let oldSelection = oldName
-        undoManager?.registerUndo(withTarget: self) { vm in
-            vm.documentBinding.wrappedValue = oldDocument
-            vm.selectedCollectionName = oldSelection
-        }
-        undoManager?.setActionName("Rename Collection")
+        let assetsFolder = document.wrappedValue.resolvedAssetsFolderURL()
         
         // Rename in file system and rebase paths
         if let assets = assetsFolder {
@@ -193,9 +102,6 @@ class CollectionViewModel: ObservableObject {
                     oldName: oldName,
                     newName: trimmed
                 )
-                
-                let oldFolder = CollectionFS.collectionsRoot(in: assets)
-                    .appendingPathComponent(CollectionFS.safeName(oldName), isDirectory: true)
                 
                 // Rebase all item paths - keep them relative
                 var updatedSection = section
@@ -218,13 +124,13 @@ class CollectionViewModel: ObservableObject {
                     }
                 }
                 
-                // Update document using helpers
-                removeCollection(oldName)
-                addCollection(trimmed, section: updatedSection)
-                objectWillChange.send()
+                // Update document
+                document.wrappedValue.collection.removeValue(forKey: oldName)
+                document.wrappedValue.collection[trimmed] = updatedSection
+                document.wrappedValue.updatedAt = Date()
                 
                 // Update bookmarks for all rebased paths
-                if let wrapper = documentBinding.wrappedValue.documentWrapper {
+                if let wrapper = document.wrappedValue.documentWrapper {
                     for item in updatedSection.items {
                         if let fp = item.filePath, !fp.path.isEmpty {
                             let oldPath = fp.path.replacingOccurrences(of: CollectionFS.safeName(trimmed), with: CollectionFS.safeName(oldName))
@@ -240,15 +146,15 @@ class CollectionViewModel: ObservableObject {
             } catch {
                 print("Error renaming collection folder: \(error)")
                 // Still update the collection name in document even if folder rename fails
-                removeCollection(oldName)
-                addCollection(trimmed, section: section)
-                objectWillChange.send()
+                document.wrappedValue.collection.removeValue(forKey: oldName)
+                document.wrappedValue.collection[trimmed] = section
+                document.wrappedValue.updatedAt = Date()
             }
         } else {
             // No assets folder, just rename in document
-            removeCollection(oldName)
-            addCollection(trimmed, section: section)
-            objectWillChange.send()
+            document.wrappedValue.collection.removeValue(forKey: oldName)
+            document.wrappedValue.collection[trimmed] = section
+            document.wrappedValue.updatedAt = Date()
         }
         
         // Update selection
@@ -256,21 +162,18 @@ class CollectionViewModel: ObservableObject {
     }
     
     /// Deletes the currently selected collection
-    func deleteCollection() {
+    func deleteCollection(document: Binding<FolioDocument>) {
         guard let name = selectedCollectionName else { return }
         
-        // Register undo
-        let oldDocument = documentBinding.wrappedValue
-        let oldSelection = name
-        undoManager?.registerUndo(withTarget: self) { vm in
-            vm.documentBinding.wrappedValue = oldDocument
-            vm.selectedCollectionName = oldSelection
+        // Remove collection folder from file system if it exists
+        if let assets = document.wrappedValue.resolvedAssetsFolderURL() {
+            let colFolder = CollectionFS.collectionsRoot(in: assets)
+                .appendingPathComponent(CollectionFS.safeName(name), isDirectory: true)
+            try? FileManager.default.removeItem(at: colFolder)
         }
-        undoManager?.setActionName("Delete Collection")
         
-        // Mutate document using helper
-        removeCollection(name)
-        objectWillChange.send()
+        document.wrappedValue.collection.removeValue(forKey: name)
+        document.wrappedValue.updatedAt = Date()
         
         // Clear selection
         selectedCollectionName = nil
@@ -279,21 +182,13 @@ class CollectionViewModel: ObservableObject {
     }
     
     /// Updates collection-level images
-    func updateCollectionImage(key: String, assetPath: AssetPath?) {
+    func updateCollectionImage(key: String, assetPath: AssetPath?, document: Binding<FolioDocument>) {
         guard let name = selectedCollectionName else { return }
-        guard var section = documentBinding.wrappedValue.collection[name] else { return }
+        guard var section = document.wrappedValue.collection[name] else { return }
         
-        // Register undo
-        let oldDocument = documentBinding.wrappedValue
-        undoManager?.registerUndo(withTarget: self) { vm in
-            vm.documentBinding.wrappedValue = oldDocument
-        }
-        undoManager?.setActionName("Update Collection Image")
-        
-        // Update section
         section.images[key] = assetPath
-        updateCollectionSection(name, with: section)
-        objectWillChange.send()
+        document.wrappedValue.collection[name] = section
+        document.wrappedValue.updatedAt = Date()
     }
     
     // MARK: - Item Management
@@ -311,255 +206,70 @@ class CollectionViewModel: ObservableObject {
     }
     
     /// Adds a new item to the currently selected collection
-    func addItem() {
+    func addItem(document: Binding<FolioDocument>) {
         guard let name = selectedCollectionName else { return }
-        guard var section = documentBinding.wrappedValue.collection[name] else { return }
+        guard var section = document.wrappedValue.collection[name] else { return }
+        
+        // Generate unique label for new item
+        let uniqueLabel = generateUniqueItemLabel(existingItems: section.items)
         
         let newItem = JSONCollectionItem(
-            label: "New Item",
+            label: uniqueLabel,
             order: section.items.count
         )
         
-        // Register undo
-        let oldDocument = documentBinding.wrappedValue
-        undoManager?.registerUndo(withTarget: self) { vm in
-            vm.documentBinding.wrappedValue = oldDocument
-            vm.selectedItemId = nil
-        }
-        undoManager?.setActionName("Add Item")
-        
         // Add item
         section.items.append(newItem)
-        updateCollectionSection(name, with: section)
-        objectWillChange.send()
+        document.wrappedValue.collection[name] = section
+        document.wrappedValue.updatedAt = Date()
         
         // Select and show in inspector
         selectedItemId = newItem.id
         showInspector = true
         
         // Create item folder if assets folder exists
-        if let assets = assetsFolder {
+        if let assets = document.wrappedValue.resolvedAssetsFolderURL() {
             let colFolder = CollectionFS.collectionsRoot(in: assets)
                 .appendingPathComponent(CollectionFS.safeName(name), isDirectory: true)
-            _ = try? CollectionFS.ensureItemFolder(collectionFolder: colFolder, itemLabel: newItem.label)
+            _ = try? CollectionFS.ensureItemFolder(collectionFolder: colFolder, itemLabel: uniqueLabel)
         }
     }
     
     /// Deletes the currently selected item
-    func deleteItem() {
+    func deleteItem(document: Binding<FolioDocument>) {
         guard let name = selectedCollectionName,
               let itemId = selectedItemId else { return }
-        guard var section = documentBinding.wrappedValue.collection[name] else { return }
+        guard var section = document.wrappedValue.collection[name] else { return }
         guard let index = section.items.firstIndex(where: { $0.id == itemId }) else { return }
         
-        // Register undo
-        let oldDocument = documentBinding.wrappedValue
-        let oldItemId = itemId
-        undoManager?.registerUndo(withTarget: self) { vm in
-            vm.documentBinding.wrappedValue = oldDocument
-            vm.selectedItemId = oldItemId
+        let item = section.items[index]
+        
+        // Remove item folder from file system if it exists
+        if let assets = document.wrappedValue.resolvedAssetsFolderURL() {
+            let colFolder = CollectionFS.collectionsRoot(in: assets)
+                .appendingPathComponent(CollectionFS.safeName(name), isDirectory: true)
+            let itemFolder = colFolder.appendingPathComponent(CollectionFS.safeName(item.label), isDirectory: true)
+            try? FileManager.default.removeItem(at: itemFolder)
         }
-        undoManager?.setActionName("Delete Item")
         
         // Remove item
         section.items.remove(at: index)
-        updateCollectionSection(name, with: section)
-        objectWillChange.send()
+        document.wrappedValue.collection[name] = section
+        document.wrappedValue.updatedAt = Date()
         
         // Deselect
         selectedItemId = nil
         showInspector = false
     }
     
-    /// Updates a specific field of the currently selected item
-    func updateItem(_ update: (inout JSONCollectionItem) -> Void) {
-        print("[CollectionViewModel] 🔄 updateItem called")
-        guard let name = selectedCollectionName,
-              let index = selectedItemIndex else {
-            print("  ❌ No selected collection or item index")
-            return
-        }
-        guard var section = documentBinding.wrappedValue.collection[name] else {
-            print("  ❌ Could not find section: \(name)")
-            return
-        }
-        
-        let itemBefore = section.items[index]
-        print("  📝 Item before update:")
-        print("    - ID: \(itemBefore.id)")
-        print("    - Label: \(itemBefore.label)")
-        print("    - Summary: \(itemBefore.summary ?? "nil")")
-        print("    - Type: \(itemBefore.type)")
-        print("    - URL: \(itemBefore.url ?? "nil")")
-        print("    - Thumbnail: \(itemBefore.thumbnail.path)")
-        
-        // Register undo
-        let oldDocument = documentBinding.wrappedValue
-        undoManager?.registerUndo(withTarget: self) { vm in
-            vm.documentBinding.wrappedValue = oldDocument
-        }
-        
-        // Apply update
-        update(&section.items[index])
-        
-        let itemAfter = section.items[index]
-        print("  📝 Item after update:")
-        print("    - Label: \(itemAfter.label)")
-        print("    - Summary: \(itemAfter.summary ?? "nil")")
-        print("    - Type: \(itemAfter.type)")
-        print("    - URL: \(itemAfter.url ?? "nil")")
-        print("    - Thumbnail: \(itemAfter.thumbnail.path)")
-        
-        // CRITICAL: Use the modified section, don't re-read from binding
-        updateCollectionSection(name, with: section)
-        
-        print("  ✅ Document updated and change published")
-        
-        // Verify the update stuck
-        if let verifySection = documentBinding.wrappedValue.collection[name],
-           let verifyItem = verifySection.items.first(where: { $0.id == section.items[index].id }) {
-            print("  🔍 Verification - item in document now has:")
-            print("    - Label: \(verifyItem.label)")
-            print("    - Summary: \(verifyItem.summary ?? "nil")")
-            print("    - Thumbnail: \(verifyItem.thumbnail.path)")
-        } else {
-            print("  ❌ Verification failed - couldn't find item in document!")
-        }
-    }
-    
-    /// Updates the label of the currently selected item with file system operations
-    func updateItemLabel(to newLabel: String) {
-        print("[CollectionViewModel] 🏷️ updateItemLabel to: '\(newLabel)'")
-        guard let name = selectedCollectionName,
-              let index = selectedItemIndex else {
-            print("  ❌ No selected collection or item index")
-            return
-        }
-        guard var section = documentBinding.wrappedValue.collection[name] else {
-            print("  ❌ Could not find section: \(name)")
-            return
-        }
-        
-        let oldLabel = section.items[index].label
-        let trimmed = newLabel.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, trimmed != oldLabel else {
-            print("  ℹ️ Label unchanged or empty")
-            return
-        }
-        
-        print("  🔄 Changing label from '\(oldLabel)' to '\(trimmed)'")
-        
-        // Register undo
-        let oldDocument = documentBinding.wrappedValue
-        undoManager?.registerUndo(withTarget: self) { vm in
-            vm.documentBinding.wrappedValue = oldDocument
-        }
-        undoManager?.setActionName("Rename Item")
-        
-        // Update label
-        section.items[index].label = trimmed
-        
-        // Rename folder and rebase paths if assets folder exists
-        if let assets = assetsFolder {
-            print("  📂 Renaming folder in assets...")
-            let colFolder = CollectionFS.collectionsRoot(in: assets)
-                .appendingPathComponent(CollectionFS.safeName(name), isDirectory: true)
-            
-            do {
-                let oldFolder = colFolder.appendingPathComponent(CollectionFS.safeName(oldLabel), isDirectory: true)
-                let newFolder = try CollectionFS.renameItemFolder(
-                    collectionFolder: colFolder,
-                    oldLabel: oldLabel,
-                    newLabel: trimmed
-                )
-                print("  ✅ Folder renamed successfully")
-                print("    - Old: \(oldFolder.path)")
-                print("    - New: \(newFolder.path)")
-                
-                // Rebase file path - ensure we keep it relative
-                if let fp = section.items[index].filePath,
-                   !fp.path.isEmpty {
-                    let oldPath = fp.path
-                    // Get the filename from the old path
-                    let filename = URL(fileURLWithPath: oldPath).lastPathComponent
-                    // Build new relative path: Collections/CollectionName/NewItemLabel/filename
-                    let newRelativePath = newFolder.relativePath(from: assets) ?? "Collections/\(CollectionFS.safeName(name))/\(CollectionFS.safeName(trimmed))"
-                    section.items[index].filePath?.path = "\(newRelativePath)/\(filename)"
-                    
-                    print("  🔄 File path rebased:")
-                    print("    - Old: \(oldPath)")
-                    print("    - New: \(section.items[index].filePath?.path ?? "nil")")
-                    
-                    // Update bookmark
-                    if let wrapper = documentBinding.wrappedValue.documentWrapper,
-                       let newPath = section.items[index].filePath?.path {
-                        try? BookmarkManager.shared.updateKey(from: oldPath, to: newPath, in: wrapper)
-                    }
-                }
-                
-                // Rebase thumbnail path - ensure we keep it relative
-                if !section.items[index].thumbnail.path.isEmpty {
-                    let oldPath = section.items[index].thumbnail.path
-                    // Get the filename from the old path
-                    let filename = URL(fileURLWithPath: oldPath).lastPathComponent
-                    // Build new relative path: Collections/CollectionName/NewItemLabel/filename
-                    let newRelativePath = newFolder.relativePath(from: assets) ?? "Collections/\(CollectionFS.safeName(name))/\(CollectionFS.safeName(trimmed))"
-                    section.items[index].thumbnail.path = "\(newRelativePath)/\(filename)"
-                    
-                    print("  🔄 Thumbnail path rebased:")
-                    print("    - Old: \(oldPath)")
-                    print("    - New: \(section.items[index].thumbnail.path)")
-                    
-                    // Update bookmark
-                    if let wrapper = documentBinding.wrappedValue.documentWrapper {
-                        let newPath = section.items[index].thumbnail.path
-                        try? BookmarkManager.shared.updateKey(from: oldPath, to: newPath, in: wrapper)
-                    }
-                }
-            } catch {
-                print("  ⚠️ Error renaming item folder: \(error)")
-            }
-        }
-        
-        // CRITICAL: Replace entire document to trigger SwiftUI change detection
-        var updatedDocument = documentBinding.wrappedValue
-        updatedDocument.collection[name] = section
-        documentBinding.wrappedValue = updatedDocument
-        
-        objectWillChange.send()
-        print("  ✅ Label update complete")
-    }
-    
-    /// Reorders items in the collection
-    func moveItems(from source: IndexSet, to destination: Int) {
-        guard let name = selectedCollectionName else { return }
-        guard var section = documentBinding.wrappedValue.collection[name] else { return }
-        
-        // Register undo
-        let oldDocument = documentBinding.wrappedValue
-        undoManager?.registerUndo(withTarget: self) { vm in
-            vm.documentBinding.wrappedValue = oldDocument
-        }
-        undoManager?.setActionName("Reorder Items")
-        
-        // Move items
-        section.items.move(fromOffsets: source, toOffset: destination)
-        
-        // Update order values
-        for (index, _) in section.items.enumerated() {
-            section.items[index].order = index
-        }
-        
-        updateCollectionSection(name, with: section)
-        objectWillChange.send()
-    }
-    
     /// Copies a file to the collection's assets folder
-    func copyFileToAssets(from sourceURL: URL) {
+    func copyFileToAssets(from sourceURL: URL, document: Binding<FolioDocument>) {
         guard let name = selectedCollectionName,
-              let index = selectedItemIndex,
-              let assets = assetsFolder else { return }
-        guard var section = documentBinding.wrappedValue.collection[name] else { return }
+              let itemId = selectedItemId,
+              let assets = document.wrappedValue.resolvedAssetsFolderURL() else { return }
+        
+        guard var section = document.wrappedValue.collection[name],
+              let index = section.items.firstIndex(where: { $0.id == itemId }) else { return }
         
         let itemLabel = section.items[index].label
         let colFolder = CollectionFS.collectionsRoot(in: assets)
@@ -569,21 +279,45 @@ class CollectionViewModel: ObservableObject {
             let itemFolder = try CollectionFS.ensureItemFolder(collectionFolder: colFolder, itemLabel: itemLabel)
             let destURL = try CollectionFS.copyWithCollision(from: sourceURL, to: itemFolder)
             
-            // Register undo
-            let oldDocument = documentBinding.wrappedValue
-            undoManager?.registerUndo(withTarget: self) { vm in
-                vm.documentBinding.wrappedValue = oldDocument
-            }
-            undoManager?.setActionName("Copy File to Assets")
-            
             // Update file path - calculate relative path from assets folder
             let relativePath = destURL.relativePath(from: assets) ?? destURL.lastPathComponent
             section.items[index].filePath = AssetPath(id: UUID(), path: relativePath)
-            updateCollectionSection(name, with: section)
-            objectWillChange.send()
+            
+            document.wrappedValue.collection[name] = section
+            document.wrappedValue.updatedAt = Date()
             
         } catch {
             print("Error copying file to assets: \(error)")
+        }
+    }
+    
+    // MARK: - Helper Methods
+    
+    /// Generates a unique label for a new item in a collection
+    private func generateUniqueItemLabel(existingItems: [JSONCollectionItem]) -> String {
+        let baseLabel = "New Item"
+        let existingLabels = Set(existingItems.map { $0.label })
+        
+        // If base label is not taken, use it
+        if !existingLabels.contains(baseLabel) {
+            return baseLabel
+        }
+        
+        // Otherwise, find next available number
+        var counter = 2
+        while existingLabels.contains("\(baseLabel) \(counter)") {
+            counter += 1
+        }
+        return "\(baseLabel) \(counter)"
+    }
+    
+    /// Validates that a label is unique within the collection (excluding the item being edited)
+    func isLabelUnique(_ label: String, excludingItemId: UUID, in collectionName: String, document: FolioDocument) -> Bool {
+        guard let section = document.collection[collectionName] else { return true }
+        
+        let trimmedLabel = label.trimmingCharacters(in: .whitespacesAndNewlines)
+        return !section.items.contains { item in
+            item.id != excludingItemId && item.label == trimmedLabel
         }
     }
 }

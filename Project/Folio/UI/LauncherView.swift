@@ -127,12 +127,45 @@ struct LauncherView: View {
             return
         }
         
+        // Check permissions
+        if !FileManager.default.isReadableFile(atPath: doc.filePath) {
+            grantAccess(to: doc)
+            return
+        }
+        
         let url = URL(fileURLWithPath: doc.filePath)
         NSDocumentController.shared.openDocument(withContentsOf: url, display: true) { _, _, error in
             if let error = error {
                 errorMessage = "Failed to open document: \(error.localizedDescription)"
             }
             // Keep launcher open - don't dismiss
+        }
+    }
+    
+    private func grantAccess(to doc: ProjectDoc) {
+        let panel = NSOpenPanel()
+        panel.message = "Grant permission to open '\(doc.title)'"
+        panel.prompt = "Grant Access"
+        panel.allowedContentTypes = [.folioDoc]
+        panel.allowsOtherFileTypes = false
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.directoryURL = URL(fileURLWithPath: doc.filePath).deletingLastPathComponent()
+        
+        if panel.runModal() == .OK, let url = panel.url {
+            // Try to open the selected file
+            NSDocumentController.shared.openDocument(withContentsOf: url, display: true) { _, _, error in
+                if let error = error {
+                    errorMessage = "Failed to open document: \(error.localizedDescription)"
+                } else {
+                    errorMessage = nil
+                    // Update path if different
+                    if url.path != doc.filePath {
+                        doc.filePath = url.path
+                        try? modelContext.save()
+                    }
+                }
+            }
         }
     }
     
