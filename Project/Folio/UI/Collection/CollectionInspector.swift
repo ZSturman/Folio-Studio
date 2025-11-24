@@ -469,12 +469,14 @@ struct CollectionInspector: View {
     }
     
     private var filteredProjects: [ProjectDoc] {
-        if showPrivateProjects { return allProjects }
-        return allProjects.filter { $0.isPublic }
+        let base: [ProjectDoc] = showPrivateProjects ? allProjects : allProjects.filter { $0.isPublic }
+        let currentPath = document.filePath?.path ?? ""
+        if currentPath.isEmpty { return base }
+        return base.filter { $0.filePath != currentPath }
     }
     
     private func projectIdString(_ p: ProjectDoc) -> String {
-        return p.persistentModelID.hashValue.description
+        return p.filePath
     }
     
     private func ensureAssetsFolder() -> URL? {

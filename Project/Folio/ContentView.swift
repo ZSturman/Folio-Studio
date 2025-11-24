@@ -5,9 +5,20 @@
 //  Created by Zachary Sturman on 11/2/25.
 //
 
-
 import SwiftUI
 import SwiftData
+
+private enum JSONPanelViewMode: String, CaseIterable, Identifiable {
+    case tree
+    case raw
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .tree: return "Tree"
+        case .raw: return "Raw"
+        }
+    }
+}
 
 struct ContentView: View {
     @Environment(\.modelContext) private var modelContext
@@ -38,6 +49,8 @@ struct ContentView: View {
     @State private var jsonError: String?
     @State private var showAssetFolderPrompt: Bool = false
     @State private var jsonDebounceTask: Task<Void, Never>?
+    @State private var jsonPanelViewMode: JSONPanelViewMode = .tree
+    @State private var jsonPanelDragStartHeight: Double = 0
     
     var fileURL: URL?
     
@@ -142,7 +155,7 @@ struct ContentView: View {
                             document: $document,
                             assetsFolder: document.assetsFolder?.resolvedURL()
                         )
-                        .inspectorColumnWidth(min: 280, ideal: 320, max: 400)
+                        .inspectorColumnWidth(min: 280, ideal: 320)
                     
                     case .none:
                         EmptyView()
@@ -244,22 +257,61 @@ struct ContentView: View {
     
     private var jsonPanel: some View {
         VStack(spacing: 0) {
-            // Header with toggle button
-            HStack {
+            if !jsonPanelCollapsed {
+                // Drag handle (resize)
+                ZStack {
+                    Rectangle()
+                        .fill(Color.clear)
+                        .frame(height: 6)
+                        .overlay(
+                            Capsule()
+                                .fill(Color.secondary.opacity(0.4))
+                                .frame(width: 40, height: 3)
+                        )
+                }
+                .gesture(
+                    DragGesture(minimumDistance: 0)
+                        .onChanged { value in
+                            if jsonPanelDragStartHeight == 0 {
+                                jsonPanelDragStartHeight = jsonPanelHeight
+                            }
+                            let proposed = jsonPanelDragStartHeight - value.translation.height
+                            jsonPanelHeight = max(100, min(1200, proposed))
+                        }
+                        .onEnded { _ in
+                            jsonPanelDragStartHeight = 0
+                        }
+                )
+            }
+
+            // Header with toggle button and view mode
+            HStack(spacing: 8) {
                 Text("Document JSON")
                     .font(.headline)
+
                 Spacer()
+
+                if !jsonPanelCollapsed {
+                    Picker("View", selection: $jsonPanelViewMode) {
+                        ForEach(JSONPanelViewMode.allCases) { mode in
+                            Text(mode.title).tag(mode)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(maxWidth: 200)
+                }
+
                 Button {
                     withAnimation {
                         jsonPanelCollapsed.toggle()
                     }
                 } label: {
-                    Label(jsonPanelCollapsed ? "Show" : "Hide", 
+                    Label(jsonPanelCollapsed ? "Show" : "Hide",
                           systemImage: jsonPanelCollapsed ? "chevron.up" : "chevron.down")
                         .labelStyle(.iconOnly)
                 }
                 .buttonStyle(.borderless)
-                
+
                 if !jsonPanelCollapsed {
                     Button {
                         generateJSON()
@@ -267,7 +319,7 @@ struct ContentView: View {
                         Label("Refresh", systemImage: "arrow.clockwise")
                     }
                     .buttonStyle(.borderless)
-                    
+
                     Button {
                         copyJSONToClipboard()
                     } label: {
@@ -279,18 +331,35 @@ struct ContentView: View {
             .padding(.horizontal, 12)
             .padding(.vertical, 6)
             .background(Color(NSColor.controlBackgroundColor))
-            
+
             if !jsonPanelCollapsed {
                 Divider()
-                
+
                 // JSON Content
-                if let error = jsonError {
-                    Text("Error: \(error)")
-                        .foregroundStyle(.red)
-                        .padding()
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else {
-                    JSONTreeView(data: jsonData ?? Data())
+                Group {
+                    if let error = jsonError {
+                        Text("Error: \(error)")
+                            .foregroundStyle(.red)
+                            .padding()
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    } else {
+                        switch jsonPanelViewMode {
+                        case .tree:
+                            JSONOutlineView.from(document: document)
+                                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                                .background(Color(NSColor.textBackgroundColor))
+                        case .raw:
+                            ScrollView {
+                                Text(jsonString)
+                                    .font(.system(.body, design: .monospaced))
+                                    .textSelection(.enabled)
+                                    .frame(maxWidth: .infinity, alignment: .topLeading)
+                                    .padding(8)
+                            }
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .background(Color(NSColor.textBackgroundColor))
+                        }
+                    }
                 }
             }
         }
