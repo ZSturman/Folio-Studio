@@ -11,6 +11,8 @@ import SwiftUI
 struct ContentInspector: View {
     @Binding var document: FolioDocument
     
+    #warning("Add all the Basic Info tab info here. Make it so the Basic Info tab inspector is the same regardless of sub tab")
+    
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {

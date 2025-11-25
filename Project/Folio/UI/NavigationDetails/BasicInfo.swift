@@ -98,8 +98,10 @@ struct BasicInfoTabView: View {
                     }
                     Spacer()
                 }
-            }
                 
+            }
+            
+
                 
                 
                 VStack(alignment: .leading, spacing: 6) {
@@ -124,15 +126,6 @@ struct BasicInfoTabView: View {
                             .strokeBorder(.quaternary)
                     )
                 }
-            
-            
-            
-            
-
-            
-
-            
-            
             
             
         }

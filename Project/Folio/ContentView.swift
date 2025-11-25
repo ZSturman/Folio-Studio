@@ -38,7 +38,6 @@ struct ContentView: View {
     @State private var selection: SidebarTab? = .basicInfo
 
     @State private var basicInfoSubtab: BasicInfoSubtab? = .main
-    @State private var contentSubtab:   ContentSubtab?   = .summary
     @State private var selectedLanguage: ProgrammingLanguage? = .swift
     @State private var selectedSnippetID: CodeSnippetID? = nil
     @State private var selectedResourceIndex: Int?
@@ -115,12 +114,9 @@ struct ContentView: View {
                 Group {
                     switch selection {
                     case .basicInfo:
-                        BasicInfoInspector(document: $document)
-                            .inspectorColumnWidth(min: 260, ideal: 300, max: 340)
-                    
-                    case .content:
                         ContentInspector(document: $document)
                             .inspectorColumnWidth(min: 260, ideal: 300, max: 340)
+
                     
                     case .media:
                         if let _ = document.images[selectedImageLabel] {
@@ -529,36 +525,23 @@ struct ContentView: View {
     private func detailView(for tab: SidebarTab) -> some View {
         switch tab {
         case .basicInfo:
-            // Show main BasicInfo view - classification/details are in inspector
-            BasicInfoTabView(document: $document)
-
-        case .content:
-            switch contentSubtab ?? .summary {
-            case .summary:
-                DocumentTextSection(
-                    title: "Summary",
-                    text: Binding(
-                        get: { document.summary },
-                        set: { document.summary = $0 }
-                    )
-                )
-            case .description:
-     
-                DocumentTextSection(
-                    title: "Description",
-                    text: Binding(
-                        get: { document.description ?? "" },
-                        set: { document.description = $0 }
-                    )
-                )
-                
+            switch basicInfoSubtab ?? .main {
+            case .main:
+                BasicInfoTabView(document: $document)
+                    .navigationTitle("Basic Info")
+            
+            case .classification:
+                ClassificationDetailView(document: $document)
+                    .navigationTitle("Classification")
+            
+            case .content:
+ContentDetailsView(document: $document)
+                    .navigationTitle("Content")
+            
             case .resources:
                 ResourcesDetailView(document: $document)
-                
-                
+                    .navigationTitle("Resources")
             }
-            
-        
 
         case .media:
             MediaDetailView(
@@ -588,20 +571,11 @@ struct ContentView: View {
     private var secondarySidebar: some View {
         switch selection {
         case .basicInfo:
-            // No secondary sidebar for BasicInfo - classification/details moved to inspector
-            Text("Use inspector for classification and details")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .padding()
-
-        case .content:
-            List(ContentSubtab.allCases, selection: $contentSubtab) { sub in
+            List(BasicInfoSubtab.allCases, selection: $basicInfoSubtab) { sub in
                 Text(sub.title)
                     .tag(sub)
             }
-            .navigationTitle("Content")
-
+            .navigationTitle("Basic Info")
 
         case .media:
             MediaSecondarySidebar(

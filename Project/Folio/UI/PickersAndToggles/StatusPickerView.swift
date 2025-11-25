@@ -71,16 +71,7 @@ struct ProjectStatusPickerView: View {
                     .foregroundStyle(.secondary)
 
                 HStack(spacing: 8) {
-                    Picker("", selection: selectedStatusBinding) {
-                        Text("None").tag(nil as ProjectStatus?)
-                        ForEach(statuses, id: \.id) { s in
-                            Text(s.name).tag(s as ProjectStatus?)
-                        }
-                    }
-                    .pickerStyle(.menu)
-                    .labelsHidden()
-                    .frame(maxWidth: .infinity)
-
+                    
                     Button {
                         newStatusName = ""
                         showAddStatusSheet = true
@@ -89,6 +80,19 @@ struct ProjectStatusPickerView: View {
                     }
                     .buttonStyle(.borderless)
                     .help("Add Status")
+                    
+                    
+                    Picker("", selection: selectedStatusBinding) {
+                        Text("Choose a Status...").tag(nil as ProjectStatus?)
+                        ForEach(statuses, id: \.id) { s in
+                            Text(s.name).tag(s as ProjectStatus?)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .labelsHidden()
+                    .frame(maxWidth: .infinity)
+
+
                 }
             }
 
@@ -99,17 +103,7 @@ struct ProjectStatusPickerView: View {
                     .foregroundStyle(.secondary)
 
                 HStack(spacing: 8) {
-                    Picker("", selection: selectedPhaseBinding) {
-                        Text("None").tag(nil as ProjectStatusPhase?)
-                        ForEach(phasesForSelectedStatus, id: \.id) { p in
-                            Text(p.name).tag(p as ProjectStatusPhase?)
-                        }
-                    }
-                    .pickerStyle(.menu)
-                    .labelsHidden()
-                    .frame(maxWidth: .infinity)
-                    .disabled(selectedStatusBinding.wrappedValue == nil)
-
+                    
                     Button {
                         newPhaseName = ""
                         showAddPhaseSheet = true
@@ -119,6 +113,20 @@ struct ProjectStatusPickerView: View {
                     .buttonStyle(.borderless)
                     .help("Add Phase")
                     .disabled(selectedStatusBinding.wrappedValue == nil)
+                    
+                    
+                    Picker("", selection: selectedPhaseBinding) {
+                        Text("Choose a Phase...").tag(nil as ProjectStatusPhase?)
+                        ForEach(phasesForSelectedStatus, id: \.id) { p in
+                            Text(p.name).tag(p as ProjectStatusPhase?)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .labelsHidden()
+                    //.frame(maxWidth: .infinity)
+                    .disabled(selectedStatusBinding.wrappedValue == nil)
+
+
                 }
             }
         }

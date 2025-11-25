@@ -68,16 +68,7 @@ struct DomainCategoryPickerView: View {
                     .foregroundStyle(.secondary)
 
                 HStack(spacing: 8) {
-                    Picker("", selection: selectedDomainBinding) {
-                        Text("None").tag(nil as ProjectDomain?)
-                        ForEach(domains, id: \.id) { d in
-                            Text(d.name).tag(d as ProjectDomain?)
-                        }
-                    }
-                    .pickerStyle(.menu)
-                    .labelsHidden()
-                    .frame(maxWidth: .infinity)
-
+                    
                     Button {
                         newDomainName = ""
                         showAddDomainSheet = true
@@ -86,6 +77,18 @@ struct DomainCategoryPickerView: View {
                     }
                     .buttonStyle(.borderless)
                     .help("Add Domain")
+                    
+                    Picker("", selection: selectedDomainBinding) {
+                        Text("Choose a Domain...").tag(nil as ProjectDomain?)
+                        ForEach(domains, id: \.id) { d in
+                            Text(d.name).tag(d as ProjectDomain?)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .labelsHidden()
+                    //.frame(maxWidth: .infinity)
+
+                    Spacer()
                 }
             }
 
@@ -96,17 +99,7 @@ struct DomainCategoryPickerView: View {
                     .foregroundStyle(.secondary)
 
                 HStack(spacing: 8) {
-                    Picker("", selection: selectedCategoryBinding) {
-                        Text("None").tag(nil as ProjectCategory?)
-                        ForEach(categoriesForSelectedDomain, id: \.id) { c in
-                            Text(c.name).tag(c as ProjectCategory?)
-                        }
-                    }
-                    .pickerStyle(.menu)
-                    .labelsHidden()
-                    .frame(maxWidth: .infinity)
-                    .disabled(selectedDomainBinding.wrappedValue == nil)
-
+                    
                     Button {
                         newCategoryName = ""
                         showAddCategorySheet = true
@@ -116,6 +109,19 @@ struct DomainCategoryPickerView: View {
                     .buttonStyle(.borderless)
                     .help("Add Category")
                     .disabled(selectedDomainBinding.wrappedValue == nil)
+                    
+                    Picker("", selection: selectedCategoryBinding) {
+                        Text("Choose a Category...").tag(nil as ProjectCategory?)
+                        ForEach(categoriesForSelectedDomain, id: \.id) { c in
+                            Text(c.name).tag(c as ProjectCategory?)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .labelsHidden()
+                    //.frame(maxWidth: .infinity)
+                    .disabled(selectedDomainBinding.wrappedValue == nil)
+
+                    Spacer()
                 }
             }
         }

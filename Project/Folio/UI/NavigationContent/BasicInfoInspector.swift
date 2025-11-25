@@ -8,7 +8,7 @@
 import SwiftUI
 
 /// Inspector panel for Basic Info tab - consolidates Classification and Details
-struct BasicInfoInspector: View {
+struct CustomDetailsView: View {
     @Binding var document: FolioDocument
     @AppStorage("customFields") private var customFieldsData: Data = Data()
     @State private var customFields: [CustomFieldDefinition] = []
@@ -16,78 +16,12 @@ struct BasicInfoInspector: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                // Classification Section
-                classificationSection
-                
-                Divider()
-                
-                // Details Section
                 detailsSection
             }
             .padding()
         }
-        .frame(minWidth: 260, idealWidth: 300, maxWidth: 340)
-        .background(Color(NSColor.windowBackgroundColor))
         .onAppear {
             loadCustomFields()
-        }
-    }
-    
-    // MARK: - Classification Section
-    
-    private var classificationSection: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Classification")
-                .font(.headline)
-            
-            VStack(alignment: .leading, spacing: 12) {
-                Text("Domain & Category")
-                    .font(.subheadline)
-                    .bold()
-                DomainCategoryPickerView(document: $document)
-            }
-            
-            VStack(alignment: .leading, spacing: 12) {
-                Text("Project Status")
-                    .font(.subheadline)
-                    .bold()
-                ProjectStatusPickerView(document: $document)
-            }
-            
-            VStack(alignment: .leading, spacing: 12) {
-                Text("Tags")
-                    .font(.subheadline)
-                    .bold()
-                TagsEditorView(document: $document)
-            }
-            
-            VStack(alignment: .leading, spacing: 12) {
-                Text("Topics")
-                    .font(.subheadline)
-                    .bold()
-                TopicsEditorView(document: $document)
-            }
-            
-            VStack(alignment: .leading, spacing: 12) {
-                Text("Subjects")
-                    .font(.subheadline)
-                    .bold()
-                SubjectsEditorView(document: $document)
-            }
-            
-            VStack(alignment: .leading, spacing: 12) {
-                Text("Genres")
-                    .font(.subheadline)
-                    .bold()
-                GenresEditorView(document: $document)
-            }
-            
-            VStack(alignment: .leading, spacing: 12) {
-                Text("Mediums")
-                    .font(.subheadline)
-                    .bold()
-                MediumsEditorView(document: $document)
-            }
         }
     }
     

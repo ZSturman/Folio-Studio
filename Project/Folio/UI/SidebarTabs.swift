@@ -13,7 +13,8 @@ import SwiftUI
 enum BasicInfoSubtab: String, CaseIterable, Identifiable, Hashable {
     case main
     case classification
-    case details
+    case content
+    case resources
 
     var id: String { rawValue }
 
@@ -21,23 +22,8 @@ enum BasicInfoSubtab: String, CaseIterable, Identifiable, Hashable {
         switch self {
         case .main:           return "Main"
         case .classification: return "Classification"
-        case .details:        return "Details"
-        }
-    }
-}
-
-enum ContentSubtab: String, CaseIterable, Identifiable, Hashable {
-    case summary
-    case description
-    case resources
-
-    var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .summary:     return "Summary"
-        case .description: return "Description"
-        case .resources:   return "Resources"
+        case .content:        return "Content"
+        case .resources:      return "Resources"
         }
     }
 }
@@ -45,10 +31,7 @@ enum ContentSubtab: String, CaseIterable, Identifiable, Hashable {
 enum SidebarTab: String, CaseIterable, Identifiable, Hashable {
     case basicInfo
     case media
-
-    case content
     case collection
-
     case snippets
 
     var id: String { rawValue }
@@ -57,7 +40,6 @@ enum SidebarTab: String, CaseIterable, Identifiable, Hashable {
         switch self {
         case .basicInfo:              return "Basic Info"
         case .collection:             return "Collection"
-        case .content:                return "Content"
         case .media:                  return "Media"
         case .snippets:               return "Snippets"
         }
@@ -67,7 +49,6 @@ enum SidebarTab: String, CaseIterable, Identifiable, Hashable {
         switch self {
         case .basicInfo:              return "info.circle"
         case .collection:             return "tray"
-        case .content:                return "doc.text"
         case .media:                  return "video"
         case .snippets:               return "chevron.left.slash.chevron.right"
         }
@@ -110,8 +91,8 @@ struct SidebarTabsView: View {
     }
 }
 
-#Preview {
-    NavigationView {
-        SidebarTabsView(selection: .init(get: { nil }, set: { _ in }))
-    }
-}
+//#Preview {
+//    NavigationView {
+//        SidebarTabsView(selection: .init(get: { nil }, set: { _ in }))
+//    }
+//}
