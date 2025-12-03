@@ -103,52 +103,53 @@ func seedProjectStatusCatalog(
     addedVia: AddedViaOption = .system
 ) throws {
     let catalog: [String: [String]] = [
-        "idea": [
-            "referenceOnly",
-            "scribble",
-            "doodle",
-            "hook",
-            "concept",
-            "inspiration",
-            "jumpingOffPoint",
-            "roughSketch",
-            "potentialFeature",
-            "potentialApp",
-            "potentialMarket",
-            "researchQuestion",
-            "whiteBoardNote",
-            "tentativeHypothesis",
-            "thoughtExperiment",
-            "problemStatementDraft",
-            "speculativeAngle",
-            "protoTheory",
-            "causalGuess",
-            "speculation",
-            "roughPlan",
-            "other"
+        "Idea": [
+            "Reference Only",
+            "Scribble",
+            "Doodle",
+            "Hook",
+            "Concept",
+            "Inspiration",
+            "Jumping Off Point",
+            "Rough Sketch",
+            "Potential Feature",
+            "Potential App",
+            "Potential Market",
+            "Research Question",
+            "White Board Note",
+            "Tentative Hypothesis",
+            "Thought Experiment",
+            "Problem Statement Draft",
+            "Speculative Angle",
+            "Proto Theory",
+            "Causal Guess",
+            "Speculation",
+            "Rough Plan",
         ],
-        "onHold": [
-            "notStarted",
-            "needsRefactor",
-            "researching",
-            "other"
+        "On Hold": [
+            "Not Started",
+            "Needs Refactor",
+            "Researching",
         ],
-        "inProgress": [],
-        "done": [
-            "onDisplay",
-            "published",
-            "released",
-            "submitted",
-            "live",
-            "other"
+        "In Progress": [
+            "Writing",
+            "Researching",
+            "Designing",
+            "Developing",
+            "Editing",
+            "Filming",
+            "Testing",
         ],
-        "archived": [
-            "notShared",
-            "abandoned",
-            "onHoldIndefinitely",
-            "scrapForParts",
-            "migrated",
-            "other"
+        "Done": [
+            "On Display",
+            "Published",
+            "Released",
+            "Submitted",
+            "Live",
+            "Archived",
+            "Abandoned",
+            "Migrated",
+            "Outdated"
         ]
     ]
 

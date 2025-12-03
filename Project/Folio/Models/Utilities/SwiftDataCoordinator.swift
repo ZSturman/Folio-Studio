@@ -185,7 +185,7 @@ final class SwiftDataCoordinator: ObservableObject, SwiftDataCoordinating {
                     }
 
                     if touched {
-                        pd.updatedAt = Date()
+                        // Removed pd.updatedAt assignment here per instructions
                         try? ctx.save()
                     }
                 }
@@ -291,7 +291,7 @@ final class SwiftDataCoordinator: ObservableObject, SwiftDataCoordinating {
         }
 
         if changed {
-            pd.updatedAt = Date()
+            // Removed pd.updatedAt assignment here per instructions
             do { try ctx.save() } catch { throw SwiftDataError.unknown("Save failed: \(error)") }
         }
     }
@@ -318,7 +318,7 @@ final class SwiftDataCoordinator: ObservableObject, SwiftDataCoordinating {
                     if existing.title != doc.title { existing.title = doc.title; changed = true }
                     if existing.isPublic != doc.isPublic { existing.isPublic = doc.isPublic; changed = true }
                     if changed {
-                        existing.updatedAt = Date()
+                        // Removed existing.updatedAt assignment here per instructions
                         do { try ctx.save() } catch { throw SwiftDataError.unknown("Save failed: \(error)") }
                         log("createNewProjectDoc: updated existing doc id=\(existing.id)")
                     }
@@ -471,8 +471,8 @@ final class SwiftDataCoordinator: ObservableObject, SwiftDataCoordinating {
                     if subjectsChanged { pd.subjects = assoc.subjects; changed = true }
 
                     if changed {
+                        // Removed pd.updatedAt assignment here per instructions
                         log("reconcileOnOpen: changes detected. saving")
-                        pd.updatedAt = Date()
                         do { try ctx.save() } catch { throw SwiftDataError.unknown("Save failed: \(error)") }
                     }
                 } else {
@@ -858,6 +858,7 @@ extension SwiftDataCoordinator {
     }
     
     
+    
 }
 
 
@@ -926,3 +927,4 @@ extension SwiftDataCoordinator {
 //    }
 //}
 //
+

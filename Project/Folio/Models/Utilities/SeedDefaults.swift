@@ -27,7 +27,7 @@ func seedIfNeeded_ResourceCatalog(in context: ModelContext) throws {
 
 @MainActor
 func seedIfNeeded_ProjectStatusCatalog(in context: ModelContext) throws {
-    let key = "projectStatusCatalog.v1"
+    let key = "projectStatusCatalog.v2"
 
     if try ledgerExists(key: key, in: context) {
         return
@@ -35,7 +35,7 @@ func seedIfNeeded_ProjectStatusCatalog(in context: ModelContext) throws {
 
     try seedProjectStatusCatalog(in: context, addedVia: .system)
 
-    context.insert(SeedLedger(key: key, version: 1))
+    context.insert(SeedLedger(key: key, version: 2))
     try context.save()
 }
 

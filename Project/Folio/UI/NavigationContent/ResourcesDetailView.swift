@@ -48,6 +48,13 @@ struct ResourcesDetailView: View {
                                         }
                                         .buttonStyle(.borderless)
                                         .disabled(index == document.resources.count - 1)
+
+                                        Button(role: .destructive) {
+                                            deleteResource(at: index)
+                                        } label: {
+                                            Image(systemName: "trash")
+                                        }
+                                        .buttonStyle(.borderless)
                                     }
                                 }
 
@@ -100,5 +107,10 @@ struct ResourcesDetailView: View {
         guard index < document.resources.count - 1 else { return }
         let resource = document.resources.remove(at: index)
         document.resources.insert(resource, at: index + 1)
+    }
+
+    private func deleteResource(at index: Int) {
+        guard document.resources.indices.contains(index) else { return }
+        document.resources.remove(at: index)
     }
 }

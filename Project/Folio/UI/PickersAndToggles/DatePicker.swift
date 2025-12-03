@@ -25,8 +25,10 @@ struct DocumentCalendarPicker: View {
     private var hasDate: Bool { document[keyPath: keyPath] != nil }
 
     private var accessibilityValue: String {
-        let date = document[keyPath: keyPath] ?? Date()
-        return date.formatted(date: .abbreviated, time: .omitted)
+        if let date = document[keyPath: keyPath] {
+            return date.formatted(date: .abbreviated, time: .omitted)
+        }
+        return "None"
     }
 
     var body: some View {
@@ -45,6 +47,23 @@ struct DocumentCalendarPicker: View {
                 .datePickerStyle(.field)
                 .accessibilityLabel(Text(title))
                 .accessibilityValue(Text(accessibilityValue))
+                .disabled(!hasDate)
+
+                Spacer(minLength: 8)
+
+                if hasDate {
+                    Button("Clear") {
+                        document[keyPath: keyPath] = nil
+                    }
+                    .buttonStyle(.borderless)
+                    .accessibilityLabel(Text("Clear \(title) date"))
+                } else {
+                    Button("Set") {
+                        document[keyPath: keyPath] = Date()
+                    }
+                    .buttonStyle(.borderless)
+                    .accessibilityLabel(Text("Set \(title) date"))
+                }
             }
         }
         .controlSize(.regular)
@@ -52,10 +71,3 @@ struct DocumentCalendarPicker: View {
     }
 }
 
-#Preview {
-    Form {
-        DocumentCalendarPicker(document: .constant(FolioDocument()), title: "Created At", keyPath: \.createdAt)
-    }
-    .frame(width: 360)
-    .padding()
-}

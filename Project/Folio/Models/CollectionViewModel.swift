@@ -65,7 +65,6 @@ class CollectionViewModel: ObservableObject {
         
         // Mutate document
         document.wrappedValue.collection[finalName] = newSection
-        document.wrappedValue.updatedAt = Date()
         
         // Select the new collection
         selectedCollectionName = finalName
@@ -127,7 +126,6 @@ class CollectionViewModel: ObservableObject {
                 // Update document
                 document.wrappedValue.collection.removeValue(forKey: oldName)
                 document.wrappedValue.collection[trimmed] = updatedSection
-                document.wrappedValue.updatedAt = Date()
                 
                 // Update bookmarks for all rebased paths
                 if let wrapper = document.wrappedValue.documentWrapper {
@@ -148,13 +146,11 @@ class CollectionViewModel: ObservableObject {
                 // Still update the collection name in document even if folder rename fails
                 document.wrappedValue.collection.removeValue(forKey: oldName)
                 document.wrappedValue.collection[trimmed] = section
-                document.wrappedValue.updatedAt = Date()
             }
         } else {
             // No assets folder, just rename in document
             document.wrappedValue.collection.removeValue(forKey: oldName)
             document.wrappedValue.collection[trimmed] = section
-            document.wrappedValue.updatedAt = Date()
         }
         
         // Update selection
@@ -173,7 +169,6 @@ class CollectionViewModel: ObservableObject {
         }
         
         document.wrappedValue.collection.removeValue(forKey: name)
-        document.wrappedValue.updatedAt = Date()
         
         // Clear selection
         selectedCollectionName = nil
@@ -188,7 +183,6 @@ class CollectionViewModel: ObservableObject {
         
         section.images[key] = assetPath
         document.wrappedValue.collection[name] = section
-        document.wrappedValue.updatedAt = Date()
     }
     
     // MARK: - Item Management
@@ -221,7 +215,6 @@ class CollectionViewModel: ObservableObject {
         // Add item
         section.items.append(newItem)
         document.wrappedValue.collection[name] = section
-        document.wrappedValue.updatedAt = Date()
         
         // Select and show in inspector
         selectedItemId = newItem.id
@@ -255,7 +248,6 @@ class CollectionViewModel: ObservableObject {
         // Remove item
         section.items.remove(at: index)
         document.wrappedValue.collection[name] = section
-        document.wrappedValue.updatedAt = Date()
         
         // Deselect
         selectedItemId = nil
@@ -284,7 +276,6 @@ class CollectionViewModel: ObservableObject {
             section.items[index].filePath = AssetPath(id: UUID(), path: relativePath)
             
             document.wrappedValue.collection[name] = section
-            document.wrappedValue.updatedAt = Date()
             
         } catch {
             print("Error copying file to assets: \(error)")
