@@ -32,6 +32,11 @@ struct MediaInspectorView: View {
                 // Image Properties Section
                 imagePropertiesSection
                 
+                // NOTE: Image editing controls temporarily disabled for simplicity
+                // Images are now imported with their native aspect ratio
+                // Uncomment below to re-enable transform/scale/rotation editing
+                
+                /*
                 Divider()
                 
                 // Aspect Ratio Section
@@ -57,12 +62,13 @@ struct MediaInspectorView: View {
                     
                     // History Controls
                     historySection
-                    
-                    Divider()
-                    
-                    // Action Buttons
-                    actionsSection
                 }
+                */
+                
+                Divider()
+                
+                // Action Buttons
+                actionsSection
                 
                 Spacer()
             }
@@ -72,7 +78,7 @@ struct MediaInspectorView: View {
         .background(Color(NSColor.windowBackgroundColor))
         .fileImporter(
             isPresented: $isImporting,
-            allowedContentTypes: [.image],
+            allowedContentTypes: [.image, .gif],
             allowsMultipleSelection: false
         ) { result in
             handleImageImport(result)
@@ -147,22 +153,22 @@ struct MediaInspectorView: View {
                 }
                 .font(.subheadline)
                 
-                HStack {
-                    Text("Aspect Ratio:")
-                        .foregroundColor(.secondary)
-                        .frame(width: 80, alignment: .leading)
-                    Text(viewModel.selectedAspectRatio.displayRatio)
-                }
-                .font(.subheadline)
-                
-                if let maxPixels = selectedLabel.preferredMaxPixels {
+                // Show actual image dimensions if available
+                if let assetPath = document.images[selectedLabel],
+                   let customAspect = assetPath.customAspectRatio {
                     HStack {
-                        Text("Target Size:")
+                        Text("Size:")
                             .foregroundColor(.secondary)
                             .frame(width: 80, alignment: .leading)
-                        Text("\(Int(maxPixels.width)) × \(Int(maxPixels.height))")
+                        Text("\(Int(customAspect.width)) × \(Int(customAspect.height))")
                     }
                     .font(.subheadline)
+                }
+                
+                if let error = importError {
+                    Text(error)
+                        .font(.caption)
+                        .foregroundStyle(.red)
                 }
             }
             .padding(.leading, 8)
@@ -186,15 +192,36 @@ struct MediaInspectorView: View {
             
             if isPresetLabel {
                 // Show read-only aspect ratio for presets
-                HStack {
-                    Text("This preset uses a fixed aspect ratio: \(viewModel.selectedAspectRatio.displayRatio)")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .padding(8)
-                        .background(
-                            RoundedRectangle(cornerRadius: 6)
-                                .fill(Color(NSColor.controlBackgroundColor))
-                        )
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Text("This preset uses a fixed aspect ratio: \(viewModel.selectedAspectRatio.displayRatio)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .padding(8)
+                            .background(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .fill(Color(NSColor.controlBackgroundColor))
+                            )
+                    }
+                    
+                    // Poster orientation flip button
+                    if isPosterLabel {
+                        HStack(spacing: 8) {
+                            Button(action: flipPosterOrientation) {
+                                Label(
+                                    isPosterLandscape ? "Switch to Portrait (2:3)" : "Switch to Landscape (3:2)",
+                                    systemImage: "rotate.right"
+                                )
+                                .frame(maxWidth: .infinity)
+                            }
+                            .buttonStyle(.bordered)
+                            .help(isPosterLandscape ? "Switch to portrait orientation (2:3)" : "Switch to landscape orientation (3:2)")
+                        }
+                        
+                        Text(isPosterLandscape ? "Current: Landscape (3:2)" : "Current: Portrait (2:3)")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
                 }
             } else {
                 // Show aspect ratio picker for custom labels
@@ -224,6 +251,58 @@ struct MediaInspectorView: View {
             return true
         case .custom:
             return false
+        }
+    }
+    
+    private var isPosterLabel: Bool {
+        if case .poster = selectedLabel { return true }
+        return false
+    }
+    
+    /// Returns true if the current poster is in landscape orientation (3:2)
+    private var isPosterLandscape: Bool {
+        guard let assetPath = document.images[selectedLabel],
+              let custom = assetPath.customAspectRatio else {
+            return false // Default is portrait (2:3)
+        }
+        return custom.width > custom.height
+    }
+    
+    /// Toggle poster orientation between portrait (2:3) and landscape (3:2)
+    private func flipPosterOrientation() {
+        var currentPath = document.images[selectedLabel] ?? AssetPath()
+        
+        // Toggle between portrait and landscape
+        if isPosterLandscape {
+            // Switch to portrait (2:3) - clear custom to use default
+            currentPath.customAspectRatio = nil
+        } else {
+            // Switch to landscape (3:2)
+            currentPath.customAspectRatio = CGSize(width: 3, height: 2)
+        }
+        
+        document.images[selectedLabel] = currentPath
+        
+        // Update view model aspect ratio
+        if isPosterLandscape {
+            viewModel.selectedAspectRatio = .photo // 3:2
+        } else {
+            viewModel.selectedAspectRatio = .poster // 2:3
+        }
+        
+        // Re-render if image exists
+        if !currentPath.path.isEmpty || ImageAssetManager.shared.loadOriginal(id: currentPath.id) != nil {
+            let result = ImageImportService.renderAndSave(
+                label: selectedLabel,
+                assetPath: currentPath,
+                document: document,
+                customAspect: currentPath.customAspectRatio
+            )
+            if result.error == nil {
+                document.images[selectedLabel] = result.assetPath
+            } else {
+                importError = result.error
+            }
         }
     }
     

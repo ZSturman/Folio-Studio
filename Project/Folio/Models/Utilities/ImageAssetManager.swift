@@ -76,6 +76,9 @@ final class ImageAssetManager {
     
     /// Store original image from source URL in app data and return UUID identifier
     func storeOriginalFromURL(_ sourceURL: URL) throws -> UUID {
+        // Ensure directories exist before attempting to copy
+        try fileManager.createDirectory(at: originalsURL, withIntermediateDirectories: true, attributes: nil)
+        
         let id = UUID()
         let fileExtension = sourceURL.pathExtension
         let destURL = originalsURL.appendingPathComponent("\(id.uuidString).\(fileExtension)")
@@ -86,8 +89,8 @@ final class ImageAssetManager {
     
     /// Load original image by UUID
     func loadOriginal(id: UUID) -> NSImage? {
-        // Try common extensions
-        for ext in ["png", "jpg", "jpeg", "heic", "tiff"] {
+        // Try common extensions including GIF
+        for ext in ["png", "jpg", "jpeg", "heic", "tiff", "gif", "webp", "bmp"] {
             let url = originalsURL.appendingPathComponent("\(id.uuidString).\(ext)")
             if fileManager.fileExists(atPath: url.path),
                let image = NSImage(contentsOf: url) {
@@ -102,10 +105,21 @@ final class ImageAssetManager {
         originalsURL.appendingPathComponent("\(id.uuidString).\(ext)")
     }
     
+    /// Find and return the URL for an original image by UUID (checks all extensions)
+    func originalURL(for id: UUID) -> URL? {
+        for ext in ["png", "jpg", "jpeg", "heic", "tiff", "gif", "webp", "bmp"] {
+            let url = originalsURL.appendingPathComponent("\(id.uuidString).\(ext)")
+            if fileManager.fileExists(atPath: url.path) {
+                return url
+            }
+        }
+        return nil
+    }
+    
     /// Delete original image by UUID
     func deleteOriginal(id: UUID) {
-        // Try all common extensions
-        for ext in ["png", "jpg", "jpeg", "heic", "tiff"] {
+        // Try all common extensions including GIF
+        for ext in ["png", "jpg", "jpeg", "heic", "tiff", "gif", "webp", "bmp"] {
             let url = originalsURL.appendingPathComponent("\(id.uuidString).\(ext)")
             try? fileManager.removeItem(at: url)
         }

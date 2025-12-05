@@ -53,7 +53,7 @@ struct LauncherView: View {
                         .padding(.leading, 4)
                     
                     List {
-                        ForEach(documents.prefix(8), id: \.self) { doc in
+                        ForEach(documents, id: \.self) { doc in
                             HStack {
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(doc.title)

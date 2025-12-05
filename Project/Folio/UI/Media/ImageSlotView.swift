@@ -39,23 +39,21 @@ struct ImageSlotView: View {
     }
     
     /// Current aspect ratio the slot should use.
-    ///
-    /// Rules:
-    /// - thumbnail/icon/banner: use the label's preset aspect.
-    /// - poster: if we have an edited image, use its actual orientation. Otherwise use the preset.
-    /// - custom: if we have an edited image, use its actual aspect. Otherwise 1:1.
+    /// Now uses the image's native aspect ratio for all labels (fill the frame approach)
     private var slotAspect: CGFloat {
+        // First check customAspectRatio stored in the asset path
+        if let assetPath = jsonImage, let customAspect = assetPath.customAspectRatio,
+           customAspect.width > 0, customAspect.height > 0 {
+            return customAspect.width / customAspect.height
+        }
+        
+        // Then check the actual image dimensions
         if let url = editedURLIfExists,
            let img = NSImage(contentsOf: url),
            img.size.width > 0,
            img.size.height > 0 {
-            switch label {
-            case .poster, .custom:
-                // Orientation-aware: rotated or not, we just trust the image dimensions.
-                return img.size.width / img.size.height
-            default:
-                break
-            }
+            // Use image's native aspect for all labels
+            return img.size.width / img.size.height
         }
         return defaultAspect
     }
@@ -274,7 +272,7 @@ struct ImageSlotView: View {
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
         panel.canChooseFiles = true
-        panel.allowedContentTypes = [.image]
+        panel.allowedContentTypes = [.image, .gif]
         
         if panel.runModal() == .OK, let url = panel.url {
             handlePickedSource(url)

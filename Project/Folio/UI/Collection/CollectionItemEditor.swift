@@ -477,7 +477,7 @@ struct CollectionItemEditor: View {
         let panel = NSOpenPanel()
         panel.canChooseFiles = true
         panel.canChooseDirectories = false
-        panel.allowedContentTypes = [.image]
+        panel.allowedContentTypes = [.image, .gif]
         panel.allowsMultipleSelection = false
         if panel.runModal() == .OK, let url = panel.url {
             copyThumbnailIntoAssets(from: url)
@@ -506,8 +506,24 @@ struct CollectionItemEditor: View {
     }
 
     private func copyThumbnailIntoAssets(from src: URL) {
-        guard let assets = ensureAssetsFolder() else { return }
-        guard !item.label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        guard let assets = ensureAssetsFolder() else {
+            errorMessage = "Please select an assets folder first."
+            return
+        }
+        guard !item.label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            errorMessage = "Please enter a label first."
+            return
+        }
+        
+        // Validate that the source is an image
+        if let type = try? src.resourceValues(forKeys: [.contentTypeKey]).contentType,
+           !type.conforms(to: .image) {
+            errorMessage = "Please select an image file (PNG, JPEG, GIF, etc.)"
+            // Reset thumbnail so drop target reappears for retry
+            item.thumbnail = AssetPath()
+            return
+        }
+        
         do {
             let colFolder = try CollectionFS.ensureCollectionFolder(assetsFolder: assets, name: collectionName)
             let itemFolder = try CollectionFS.ensureItemFolder(collectionFolder: colFolder, itemLabel: item.label)
@@ -522,7 +538,9 @@ struct CollectionItemEditor: View {
             item.thumbnail.pathToEdited = dest.path
             errorMessage = nil
         } catch {
-            errorMessage = error.localizedDescription
+            errorMessage = "Failed to copy image: \(error.localizedDescription)"
+            // Reset thumbnail so drop target reappears for retry
+            item.thumbnail = AssetPath()
         }
     }
 }

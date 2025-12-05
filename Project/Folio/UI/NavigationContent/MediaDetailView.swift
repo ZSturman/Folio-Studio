@@ -7,6 +7,7 @@
 
 import SwiftUI
 import Combine
+import UniformTypeIdentifiers
 
 struct MediaDetailView: View {
     @Binding var document: FolioDocument
@@ -16,6 +17,9 @@ struct MediaDetailView: View {
     
     // Debounce for auto-save
     @State private var saveCancellable: AnyCancellable?
+    
+    // Drag and drop state
+    @State private var dropIsTargeted = false
 
     private var jsonImage: AssetPath? {
         document.images[selectedImageLabel]
@@ -59,8 +63,28 @@ struct MediaDetailView: View {
 
     private var isCurrentAssetEmpty: Bool {
         guard let asset = jsonImage else { return true }
+        
         // Check if we have an original in app data
-        return ImageAssetManager.shared.loadOriginal(id: asset.id) == nil
+        if ImageAssetManager.shared.loadOriginal(id: asset.id) != nil {
+            return false
+        }
+        
+        // Fallback: Check if edited file exists at assets folder path (for legacy/reopened documents)
+        if !asset.path.isEmpty,
+           let assetsFolderURL = document.assetsFolder?.resolvedURL() {
+            let editedURL = assetsFolderURL.appendingPathComponent(asset.path)
+            if FileManager.default.fileExists(atPath: editedURL.path) {
+                return false
+            }
+        }
+        
+        // Also check legacy pathToEdited
+        if let legacyPath = asset.pathToEdited, !legacyPath.isEmpty,
+           FileManager.default.fileExists(atPath: legacyPath) {
+            return false
+        }
+        
+        return true
     }
     
     private func clearImageButKeepKey() {
@@ -78,6 +102,54 @@ struct MediaDetailView: View {
         imageEditorViewModel.removeImage()
     }
     
+    // MARK: - Image URL for display
+    
+    /// Get the URL for displaying the current image (needed for GIF animation support)
+    private var currentImageURL: URL? {
+        guard let assetPath = jsonImage else { return nil }
+        
+        // Try relative path from assets folder first (the copied/edited file)
+        if !assetPath.path.isEmpty,
+           let assetsFolderURL = document.assetsFolder?.resolvedURL() {
+            let editedURL = assetsFolderURL.appendingPathComponent(assetPath.path)
+            if FileManager.default.fileExists(atPath: editedURL.path) {
+                return editedURL
+            }
+        }
+        
+        // Try legacy pathToEdited
+        if let legacyPath = assetPath.pathToEdited, !legacyPath.isEmpty,
+           FileManager.default.fileExists(atPath: legacyPath) {
+            return URL(fileURLWithPath: legacyPath)
+        }
+        
+        // Try to get original from app data
+        // Note: This won't animate GIFs properly but at least shows the image
+        return ImageAssetManager.shared.originalURL(for: assetPath.id)
+    }
+    
+    /// Display view that supports animated GIFs with zoom and scroll
+    @ViewBuilder
+    private var imageDisplayView: some View {
+        if let url = currentImageURL {
+            ZoomableImageView(url: url)
+        } else if let image = imageEditorViewModel.displayImage {
+            // Fallback to static image display
+            ZoomableImageView(nsImage: image)
+        } else {
+            // No image available
+            VStack {
+                Image(systemName: "photo")
+                    .font(.system(size: 48))
+                    .foregroundStyle(.secondary)
+                Text("Image not available")
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Color(NSColor.controlBackgroundColor))
+        }
+    }
+    
     // MARK: - Load Image into Editor
     
     private func loadImageIntoEditor() {
@@ -86,39 +158,40 @@ struct MediaDetailView: View {
             return
         }
         
-        // Load original from app data using UUID
-        guard let image = ImageAssetManager.shared.loadOriginal(id: assetPath.id) else {
+        // Try to load original from app data using UUID
+        var image: NSImage? = ImageAssetManager.shared.loadOriginal(id: assetPath.id)
+        
+        // Fallback: Try to load from edited file path (for legacy/reopened documents)
+        if image == nil {
+            // Try relative path from assets folder
+            if !assetPath.path.isEmpty,
+               let assetsFolderURL = document.assetsFolder?.resolvedURL() {
+                let editedURL = assetsFolderURL.appendingPathComponent(assetPath.path)
+                image = NSImage(contentsOf: editedURL)
+            }
+            
+            // Try legacy pathToEdited
+            if image == nil,
+               let legacyPath = assetPath.pathToEdited, !legacyPath.isEmpty {
+                image = NSImage(contentsOf: URL(fileURLWithPath: legacyPath))
+            }
+        }
+        
+        guard let loadedImage = image else {
             imageEditorViewModel.removeImage()
             return
         }
         
-        // Set aspect ratio based on label (use custom aspect if set)
-        if case .custom = selectedImageLabel, let _ = assetPath.customAspectRatio {
-            // Custom label with aspect override - need to map CGSize to AspectRatio
-            // For now, use free and the viewmodel will handle the custom size
-            imageEditorViewModel.selectedAspectRatio = .free
-        } else {
-            imageEditorViewModel.selectedAspectRatio = selectedImageLabel.toAspectRatio()
-        }
+        // Use the image's native aspect ratio (stored in customAspectRatio or from image size)
+        // This simplifies the approach - no preset aspect ratios, just use what the image is
+        imageEditorViewModel.selectedAspectRatio = .free
         
         // Load the image
-        imageEditorViewModel.loadImage(image)
-        
-        // Load existing transform from sidecar if it exists
-        let editedURL = URL(fileURLWithPath: assetPath.pathToEdited ?? "")
-        if let sidecar = EditedSidecarIO.load(for: editedURL) {
-            // Convert UserTransform to ImageTransform
-            imageEditorViewModel.currentTransform = ImageTransform(
-                cropRect: .zero, // Will be calculated
-                scale: sidecar.transform.scale,
-                translation: sidecar.transform.translation,
-                rotation: sidecar.transform.rotationDegrees
-            )
-        }
+        imageEditorViewModel.loadImage(loadedImage)
     }
     
-    // MARK: - Save Transform Changes
-    
+    // MARK: - Save Transform Changes (disabled - using simple copy approach)
+    /*
     private func saveTransformChanges() {
         guard let assetPath = jsonImage,
               !(assetPath.pathToOriginal?.isEmpty ?? true),
@@ -187,18 +260,14 @@ struct MediaDetailView: View {
             
             errorMessage = nil
         } catch {
-            errorMessage = "Failed to save: \(error.localizedDescription)"
+            errorMessage = "Failed to save: \\(error.localizedDescription)"
         }
     }
+    */
     
     private func setupAutoSave() {
-        // Watch for transform changes and debounce save
-        saveCancellable = imageEditorViewModel.$currentTransform
-            .dropFirst() // Ignore initial value
-            .debounce(for: .seconds(2), scheduler: RunLoop.main)
-            .sink { [self] _ in
-                saveTransformChanges()
-            }
+        // Transform editing disabled - no auto-save needed
+        // Images are now copied directly with their native aspect ratio
     }
     
     var body: some View {
@@ -208,10 +277,14 @@ struct MediaDetailView: View {
                 VStack(spacing: 16) {
                     Image(systemName: "photo.badge.plus")
                         .font(.system(size: 60))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(dropIsTargeted ? Color.accentColor : .secondary)
                     
-                    Text("No image set for \(selectedImageLabel.title)")
+                    Text(dropIsTargeted ? "Drop image here" : "No image set for \(selectedImageLabel.title)")
                         .font(.headline)
+                        .foregroundStyle(dropIsTargeted ? Color.accentColor : .secondary)
+                    
+                    Text("Drag and drop an image or click to browse")
+                        .font(.caption)
                         .foregroundStyle(.secondary)
                     
                     Button("Import Image") {
@@ -222,9 +295,17 @@ struct MediaDetailView: View {
                     .controlSize(.large)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(dropIsTargeted ? Color.accentColor : Color.clear, lineWidth: 3)
+                        .padding(8)
+                )
+                .onDrop(of: [.fileURL, .image], isTargeted: $dropIsTargeted) { providers in
+                    handleDrop(providers: providers)
+                }
             } else {
-                // Image canvas with ImageEditor's ImageCanvasView
-                ImageCanvasView(viewModel: imageEditorViewModel)
+                // Display the image - use AnimatedImageView for GIF support
+                imageDisplayView
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .frame(minHeight: 400)
             }
@@ -246,6 +327,40 @@ struct MediaDetailView: View {
         .onChange(of: jsonImage) { _, _ in
             loadImageIntoEditor()
         }
+    }
+    
+    // MARK: - Drag and Drop
+    
+    private func handleDrop(providers: [NSItemProvider]) -> Bool {
+        guard let fileProvider = providers.first(where: {
+            $0.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier)
+        }) else {
+            errorMessage = "Drop a file from Finder to import."
+            return false
+        }
+        
+        _ = fileProvider.loadObject(ofClass: URL.self) { url, error in
+            guard let url = url else {
+                DispatchQueue.main.async {
+                    self.errorMessage = "Failed to load dropped file."
+                }
+                return
+            }
+            
+            // Verify it's an image
+            if let type = try? url.resourceValues(forKeys: [.contentTypeKey]).contentType,
+               !type.conforms(to: .image) {
+                DispatchQueue.main.async {
+                    self.errorMessage = "Please drop an image file."
+                }
+                return
+            }
+            
+            DispatchQueue.main.async {
+                self.importImageFromURL(url)
+            }
+        }
+        return true
     }
     
     // MARK: - Import Image

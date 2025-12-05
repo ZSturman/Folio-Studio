@@ -43,7 +43,10 @@ struct ImageCanvasView: View {
                 viewModel.updateCanvasSize(geometry.size)
             }
             .onChange(of: geometry.size) { _, newSize in
-                viewModel.updateCanvasSize(newSize)
+                // Use Task to avoid multiple updates per frame
+                Task { @MainActor in
+                    viewModel.updateCanvasSize(newSize)
+                }
             }
         }
         .background(Color(NSColor.textBackgroundColor))

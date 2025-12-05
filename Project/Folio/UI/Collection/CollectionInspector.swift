@@ -506,7 +506,7 @@ struct CollectionInspector: View {
         let panel = NSOpenPanel()
         panel.canChooseFiles = true
         panel.canChooseDirectories = false
-        panel.allowedContentTypes = [.image]
+        panel.allowedContentTypes = [.image, .gif]
         panel.allowsMultipleSelection = false
         if panel.runModal() == .OK, let url = panel.url {
             copyThumbnailIntoAssets(from: url, item: item)

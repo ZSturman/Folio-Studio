@@ -29,7 +29,7 @@ struct ImageImportService {
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
         panel.canChooseFiles = true
-        panel.allowedContentTypes = [.image]
+        panel.allowedContentTypes = [.image, .gif]
         
         if panel.runModal() == .OK {
             return panel.url
@@ -39,12 +39,13 @@ struct ImageImportService {
     
     // MARK: - Import Image
     
-    /// Imports an image for a given label: stores original in app data, renders to assets folder with relative path
+    /// Imports an image for a given label: stores original in app data, copies to assets folder
+    /// Uses the image's native aspect ratio for simplicity
     /// - Parameters:
     ///   - label: The image label (thumbnail, banner, custom, etc.)
     ///   - sourceURL: The source image file URL
     ///   - document: The Folio document binding
-    ///   - customAspect: Optional custom aspect ratio (only used for custom labels)
+    ///   - customAspect: Optional custom aspect ratio (stored but not applied during import)
     /// - Returns: ImportResult with the created AssetPath and any error message
     static func importImage(
         label: ImageLabel,
@@ -65,64 +66,33 @@ struct ImageImportService {
             return ImportResult(assetPath: AssetPath(), error: "Failed to store original: \(error.localizedDescription)")
         }
         
-        // Load the original image for rendering
-        guard let srcImage = ImageAssetManager.shared.loadOriginal(id: imageID) else {
-            return ImportResult(assetPath: AssetPath(), error: "Failed to load stored image")
-        }
-        
-        // Determine edited destination in assets folder
-        let editedFilename = suggestedEditedFilename(label: label, from: sourceURL)
+        // Determine edited destination in assets folder - keep original extension for GIFs etc.
+        let ext = sourceURL.pathExtension.lowercased()
+        let editedFilename = "\(label.filenameBase).\(ext.isEmpty ? "png" : ext)"
         let editedDest = uniqueURL(in: assetsFolderURL, for: editedFilename)
         
-        // Determine aspect ratio
-        let computedAspect: CGSize
-        if case .custom = label, let customAspect = customAspect {
-            computedAspect = customAspect
-        } else if case .custom = label {
-            // Use source image aspect for custom labels without override
-            computedAspect = srcImage.size
-        } else {
-            // Use label's preset aspect
-            computedAspect = label.targetAspect(using: srcImage)
-        }
-        
-        // Render with cover options
-        let maxPixels = label.preferredMaxPixels
-        let opts = CoverRenderOptions(
-            targetAspect: computedAspect,
-            targetMaxPixels: maxPixels,
-            output: .jpeg(0.95),
-            enforceCover: true
-        )
-        
         do {
-            if let rendered = CoverRender.renderCover(nsImage: srcImage, options: opts) {
-                let tmp = editedDest.deletingLastPathComponent()
-                    .appendingPathComponent(".tmp-\(UUID().uuidString)")
-                    .appendingPathExtension(editedDest.pathExtension)
-                try rendered.writeJPEG(to: tmp, quality: 0.95)
-                try SafeFileWriter.atomicReplaceFile(at: editedDest, from: tmp)
-            } else {
-                // Fallback: save original as-is
-                if let tiffData = srcImage.tiffRepresentation,
-                   let bitmapRep = NSBitmapImageRep(data: tiffData),
-                   let jpegData = bitmapRep.representation(using: .jpeg, properties: [.compressionFactor: 0.95]) {
-                    try jpegData.write(to: editedDest)
-                }
-            }
+            // Simply copy the file to preserve format (especially for GIFs)
+            try FileManager.default.copyItem(at: sourceURL, to: editedDest)
             
             // Calculate relative path from assets folder
             let relativePath = editedDest.relativePath(from: assetsFolderURL) ?? editedDest.lastPathComponent
             
+            // Store the image's native aspect ratio
+            var nativeAspect: CGSize? = customAspect
+            if nativeAspect == nil, let srcImage = NSImage(contentsOf: sourceURL) {
+                nativeAspect = srcImage.size
+            }
+            
             let assetPath = AssetPath(
                 id: imageID,
                 path: relativePath,
-                customAspectRatio: customAspect
+                customAspectRatio: nativeAspect
             )
             return ImportResult(assetPath: assetPath, error: nil)
             
         } catch {
-            return ImportResult(assetPath: AssetPath(), error: "Failed to save edited image: \(error.localizedDescription)")
+            return ImportResult(assetPath: AssetPath(), error: "Failed to save image: \(error.localizedDescription)")
         }
     }
     
@@ -153,7 +123,8 @@ struct ImageImportService {
         
         // Determine aspect ratio
         let computedAspect: CGSize
-        if case .custom = label, let customAspect = customAspect {
+        if let customAspect = customAspect {
+            // Use custom aspect if provided (for poster rotation, custom labels, etc.)
             computedAspect = customAspect
         } else if case .custom = label {
             computedAspect = srcImage.size
@@ -253,7 +224,7 @@ struct ImageImportService {
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
         panel.canChooseFiles = true
-        panel.allowedContentTypes = [.image]
+        panel.allowedContentTypes = [.image, .gif]
         
         // Set directory hint to assets folder
         if let loc = document.assetsFolder, let assetsFolderURL = loc.resolvedURL() {
